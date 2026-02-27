@@ -192,12 +192,13 @@ function MainContent() {
   };
 
   const handlePayment = () => {
-    const handler = PaystackPop.setup({
+    const paystack = new PaystackPop();
+    paystack.newTransaction({
       key: PAYSTACK_PUBLIC_KEY,
       email: data.email || 'user@example.com',
-      amount: docPrice * 100, // Dynamic Price
-      currency: 'GHS', // Ghana Cedis
-      callback: async (response) => {
+      amount: docPrice * 100,
+      currency: 'GHS',
+      onSuccess: async (transaction) => {
         setIsPaid(true);
         setShowPayment(false);
         if (currentDocId) {
@@ -205,9 +206,8 @@ function MainContent() {
         }
         generatePDF();
       },
-      onClose: () => alert('Payment cancelled')
+      onCancel: () => alert('Payment cancelled')
     });
-    handler.openIframe();
   };
 
   const generatePDF = async () => {
