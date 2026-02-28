@@ -36,6 +36,7 @@ import confetti from 'canvas-confetti';
 import PaystackPop from '@paystack/inline-js';
 import { supabase, PAYSTACK_PUBLIC_KEY } from './lib/supabase';
 import AdminDashboard from './components/AdminDashboard';
+import AdminLogin from './components/AdminLogin';
 import { generateCVContent } from './lib/ai';
 
 const SECTIONS = [
@@ -111,12 +112,27 @@ function MainContent() {
   }, [darkMode]);
 
   useEffect(() => {
-    const admin = localStorage.getItem('is_admin') === 'true';
-    setIsAdmin(admin);
+    // Session state
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        setIsAdmin(true);
+        localStorage.setItem('is_admin', 'true');
+      } else {
+        setIsAdmin(false);
+        localStorage.removeItem('is_admin');
+      }
+    });
 
-    // Fetch price from localStorage or DB
-    const savedPrice = localStorage.getItem('spark_docs_price');
-    if (savedPrice) setDocPrice(parseFloat(savedPrice));
+    // Initial check
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setIsAdmin(true);
+      }
+    };
+    checkSession();
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const startDoc = (type) => {
@@ -894,9 +910,18 @@ function MainContent() {
     <div className="min-h-dvh flex flex-col overflow-x-hidden">
       <AnimatePresence mode="wait">
         {view === 'landing' ? (
-          <LandingPage key="landing" onStart={startDoc} onAdmin={() => setView('admin')} onProfile={() => setShowProfile(true)} darkMode={darkMode} setDarkMode={setDarkMode} />
+          <LandingPage key="landing" onStart={startDoc} onAdmin={() => setView(isAdmin ? 'admin' : 'admin_login')} onProfile={() => setShowProfile(true)} darkMode={darkMode} setDarkMode={setDarkMode} />
         ) : view === 'admin' ? (
-          <AdminDashboard key="admin" onEdit={handleAdminEdit} onBack={() => setView('landing')} currentPrice={docPrice} onPriceChange={(p) => { setDocPrice(p); localStorage.setItem('spark_docs_price', p); }} />
+          <AdminDashboard
+            key="admin"
+            onEdit={handleAdminEdit}
+            onBack={() => setView('landing')}
+            currentPrice={docPrice}
+            onPriceChange={(p) => { setDocPrice(p); localStorage.setItem('spark_docs_price', p); }}
+            onLogout={async () => { await supabase.auth.signOut(); setView('landing'); }}
+          />
+        ) : view === 'admin_login' ? (
+          <AdminLogin key="login" onLogin={() => setView('admin')} onBack={() => setView('landing')} />
         ) : (
           <EditorPage
             key="editor"
@@ -923,17 +948,54 @@ function MainContent() {
       )}
 
       {showPayment && (
-        <div className="overlay fade-in">
-          <div className="modal">
-            <div className="flex justify-end mb-4"><button onClick={() => setShowPayment(false)} className="text-text-muted hover:text-white"><X size={24} /></button></div>
-            <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6 text-primary"><CreditCard size={40} /></div>
-            <h2 className="text-2xl font-bold mb-2">Ready to Download?</h2>
-            <p className="text-text-muted mb-8">Access your professional document instantly for only GH₵{docPrice}.</p>
-            <div className="space-y-4">
-              <button onClick={handlePayment} className="btn btn-primary w-full !py-4">Pay with Paystack</button>
-              <button onClick={() => setShowPayment(false)} className="btn btn-ghost w-full">Continue Editing</button>
+        <div className="overlay">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="modal text-center"
+          >
+            <div className="flex justify-end absolute top-6 right-6">
+              <button onClick={() => setShowPayment(false)} className="text-text-muted hover:text-primary transition-colors">
+                <X size={24} />
+              </button>
             </div>
-          </div>
+
+            <motion.div
+              initial={{ rotate: -10, scale: 0.8 }}
+              animate={{ rotate: 0, scale: 1 }}
+              transition={{ type: 'spring', damping: 12 }}
+              className="w-24 h-24 bg-primary/10 rounded-3xl flex items-center justify-center mx-auto mb-8 text-primary shadow-inner"
+            >
+              <CreditCard size={48} />
+            </motion.div>
+
+            <h2 className="text-3xl font-bold mb-3 tracking-tight">Generate Final PDF</h2>
+            <p className="text-text-muted mb-10 leading-relaxed px-4">
+              Your professional document is ready. Gain full access and download in high-quality PDF for only <span className="text-primary font-bold">GH₵{docPrice}</span>.
+            </p>
+
+            <div className="space-y-4">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handlePayment}
+                className="btn btn-primary w-full !py-5 text-lg shadow-xl"
+              >
+                Unlock Document Now
+              </motion.button>
+              <button
+                onClick={() => setShowPayment(false)}
+                className="btn btn-ghost w-full !border-none !text-text-muted hover:!text-primary"
+              >
+                Maybe Later
+              </button>
+            </div>
+
+            <div className="mt-8 pt-8 border-t border-card-border flex items-center justify-center gap-6 opacity-40">
+              <Shield size={20} />
+              <span className="text-[10px] uppercase font-bold tracking-widest text-text-muted">Secure Payment by Paystack</span>
+            </div>
+          </motion.div>
         </div>
       )}
     </div>
@@ -942,43 +1004,125 @@ function MainContent() {
 
 function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="container">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="container px-4 md:px-6">
       <header className="header" style={{ border: 'none', background: 'transparent' }}>
-        <div className="brand" style={{ fontSize: '1.8rem', fontWeight: 800 }}>SPARK<span style={{ color: 'var(--primary)' }}>DOCS</span></div>
+        <motion.div
+          initial={{ x: -20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          className="brand"
+          style={{ fontSize: '1.8rem', fontWeight: 800 }}
+        >
+          SPARK<span style={{ color: 'var(--primary)' }}>DOCS</span>
+        </motion.div>
         <div className="flex items-center gap-2 ml-auto">
-          <button onClick={() => setDarkMode(!darkMode)} className="btn btn-ghost !p-2" title="Toggle Dark Mode">
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={() => setDarkMode(!darkMode)}
+            className="btn btn-ghost !p-2 rounded-full"
+            title="Toggle Dark Mode"
+          >
             {darkMode ? <Sparkles size={18} /> : <FileText size={18} />}
-          </button>
-          <button onClick={onProfile} className="btn btn-ghost !p-2" title="My Profile"><User size={20} /></button>
-          <button onClick={onAdmin} className="btn btn-ghost !p-2" title="Admin Access"><Shield size={20} /></button>
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={onProfile}
+            className="btn btn-ghost !p-2 rounded-full"
+            title="My Profile"
+          >
+            <User size={20} />
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={onAdmin}
+            className="btn btn-ghost !p-2 rounded-full"
+            title="Admin Access"
+          >
+            <Shield size={20} />
+          </motion.button>
         </div>
       </header>
+
       <section className="hero">
-        <h1 className="fade-in">Documents that get <span style={{ color: 'var(--primary)' }}>results.</span></h1>
-        <p className="fade-in" style={{ animationDelay: '0.1s' }}>Create professional CVs, application letters, and tenancy agreements in minutes.</p>
+        <motion.h1
+          initial={{ y: 30, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.6 }}
+        >
+          Professional documents <br className="hidden md:block" />
+          that get <span style={{ color: 'var(--primary)' }}>results.</span>
+        </motion.h1>
+        <motion.p
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+        >
+          Create stunning CVs, application letters, and legal agreements in minutes with our AI-powered editor.
+        </motion.p>
       </section>
-      <div className="grid">
-        {SECTIONS.map((item, i) => (
-          <div key={item.id} className="card fade-in" style={{ animationDelay: `${i * 0.1}s`, cursor: 'pointer' }} onClick={() => onStart(item)}>
-            <div style={{ background: `${item.color}15`, width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem' }}>
-              <item.icon color={item.color} size={24} />
+
+      <motion.div
+        className="grid"
+        initial="hidden"
+        animate="show"
+        variants={{
+          hidden: { opacity: 0 },
+          show: {
+            opacity: 1,
+            transition: { staggerChildren: 0.1 }
+          }
+        }}
+      >
+        {SECTIONS.map((item) => (
+          <motion.div
+            key={item.id}
+            variants={{
+              hidden: { y: 20, opacity: 0 },
+              show: { y: 0, opacity: 1 }
+            }}
+            whileHover={{ y: -8, transition: { duration: 0.2 } }}
+            whileTap={{ scale: 0.98 }}
+            className="card group cursor-pointer"
+            onClick={() => onStart(item)}
+          >
+            <div className="flex items-start justify-between mb-6">
+              <div
+                className="w-12 h-12 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 group-hover:rotate-3"
+                style={{ background: `${item.color}15` }}
+              >
+                <item.icon color={item.color} size={24} />
+              </div>
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                <ArrowRight size={20} className="text-primary" />
+              </div>
             </div>
-            <h3 className="text-xl mb-2">{item.title}</h3>
-            <p className="text-text-muted text-sm mb-6">{item.desc}</p>
-            <div className="flex items-center gap-2 text-primary font-bold text-sm">Get Started <ArrowRight size={16} /></div>
-          </div>
+            <h3 className="text-xl font-bold mb-2 group-hover:text-primary transition-colors">{item.title}</h3>
+            <p className="text-text-muted text-sm leading-relaxed">{item.desc}</p>
+          </motion.div>
         ))}
-      </div>
-      <footer className="py-12 text-center text-text-muted text-xs border-t border-card-border mt-20">
-        <p>© 2026 SPARK DOCS. All rights reserved.</p>
-        <button onClick={() => { localStorage.setItem('is_admin', 'true'); window.location.reload(); }} className="mt-4 opacity-5 hover:opacity-100">Dev Admin Bypass</button>
+      </motion.div>
+
+      <footer className="py-20 text-center border-t border-card-border mt-20 opacity-60 hover:opacity-100 transition-opacity">
+        <p className="text-sm">© 2026 SPARK DOCS. Crafted for professionals.</p>
+        <div className="flex justify-center gap-6 mt-4">
+          <a href="#" className="text-xs hover:text-primary transition-colors">Privacy Policy</a>
+          <a href="#" className="text-xs hover:text-primary transition-colors">Terms of Service</a>
+          <button
+            onClick={() => { localStorage.setItem('is_admin', 'true'); window.location.reload(); }}
+            className="text-xs opacity-10 hover:opacity-100 transition-opacity"
+          >
+            Admin Bypass
+          </button>
+        </div>
       </footer>
     </motion.div>
   );
 }
 
 function EditorPage({ type, data, setData, template, setTemplate, onBack, onDownload, onSave, isAdmin, isSaving, aiTone, setAiTone }) {
-  const [activeTab, setActiveTab] = useState('edit');
+  const [activeTab, setActiveTab] = useState('edit'); // 'edit', 'preview'
   const [docScale, setDocScale] = useState(1);
   const [lastSaved, setLastSaved] = useState(null);
 
@@ -988,21 +1132,19 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
 
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 768) {
-        const panWidth = window.innerWidth - 32; // Standard padding
-        const scale = panWidth / 210; // 210mm is the width
-        // Convert mm factor to pixels. 210mm is roughly 794px at standard 96dpi.
-        // But since CSS uses mm, we scale based on target width vs A4 width in pixels.
-        const pixelWidth = 210 * 3.78; // Approximate conversion
+      const isMobile = window.innerWidth < 1024;
+      if (isMobile) {
+        const panWidth = window.innerWidth - (window.innerWidth < 768 ? 32 : 64);
+        const pixelWidth = 210 * 3.78;
         setDocScale(Math.min(panWidth / pixelWidth, 1));
       } else {
-        setDocScale(1);
+        setDocScale(0.85); // Professional scale for desktop view
       }
     };
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [activeTab]);
+  }, []);
 
   const handleChange = (field, value) => setData(prev => ({ ...prev, [field]: value }));
   const handleListUpdate = (key, idx, field, value) => {
@@ -1014,47 +1156,75 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
   const removeListItem = (key, idx) => setData(prev => ({ ...prev, [key]: prev[key].filter((_, i) => i !== idx) }));
 
   return (
-    <div className="flex flex-col h-dvh overflow-hidden w-full">
-      <header className="header">
-        <div className="container flex justify-between items-center w-full">
-          <div className="flex items-center gap-4">
-            <button className="btn btn-ghost !p-2" onClick={onBack} title="Back to List"><ChevronLeft size={20} /></button>
+    <div className="flex flex-col h-dvh overflow-hidden w-full bg-bg">
+      <header className="header glass px-4">
+        <div className="container flex justify-between items-center w-full !p-0">
+          <div className="flex items-center gap-3">
+            <motion.button
+              whileHover={{ x: -3 }}
+              whileTap={{ scale: 0.9 }}
+              className="btn btn-ghost !p-2"
+              onClick={onBack}
+            >
+              <ChevronLeft size={20} />
+            </motion.button>
             <div className="flex flex-col">
-              <h2 className="font-bold leading-tight">{type?.title || 'Editor'}</h2>
+              <h2 className="font-bold text-sm md:text-base leading-tight truncate max-w-[120px] md:max-w-none">
+                {type?.title || 'Editor'}
+              </h2>
               <span className="text-[10px] text-text-muted">
-                {isSaving ? 'Saving...' : `Last saved: ${lastSaved}`}
+                {isSaving ? 'Saving...' : `Saved at ${lastSaved}`}
               </span>
             </div>
           </div>
+
           <div className="flex items-center gap-2">
-            <div className="hidden lg:flex items-center gap-2 mr-4 bg-white/5 p-1 rounded-lg border border-card-border">
+            <div className="hidden lg:flex items-center gap-1 bg-black/10 p-1 rounded-xl mr-2">
               {['professional', 'executive', 'simple'].map(t => (
                 <button
                   key={t}
                   onClick={() => setAiTone(t)}
-                  className={`px-3 py-1.5 rounded-md text-[10px] uppercase font-bold transition-all ${aiTone === t ? 'bg-primary text-white' : 'text-text-muted hover:text-white'}`}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] uppercase font-bold transition-all ${aiTone === t ? 'bg-primary text-white shadow-sm' : 'text-text-muted hover:text-white'}`}
                 >
                   {t}
                 </button>
               ))}
             </div>
-            {isAdmin && (
-              <button className="btn btn-ghost !px-4 hidden md:flex" onClick={onSave} disabled={isSaving}>
-                {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
-                Save Progress
-              </button>
-            )}
-            <button className="btn btn-primary" onClick={onDownload} disabled={isSaving}>
-              {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />} Download PDF
-            </button>
+
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              className="btn btn-primary !py-2 !px-4 md:!px-6 shadow-lg"
+              onClick={onDownload}
+              disabled={isSaving}
+            >
+              {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
+              <span className="hidden md:inline">Download PDF</span>
+              <span className="md:hidden">Export</span>
+            </motion.button>
           </div>
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto" style={{ '--doc-scale': docScale, background: 'var(--bg)' }}>
-        <div className="container py-12 flex flex-col gap-12">
-          {/* Editor Section */}
-          <div className="w-full" style={{ maxWidth: '800px', margin: '0 auto' }}>
+      {/* Mobile Tab Bar */}
+      <div className="lg:hidden flex border-b border-card-border bg-card-bg/50 backdrop-blur-md">
+        <button
+          onClick={() => setActiveTab('edit')}
+          className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2 ${activeTab === 'edit' ? 'border-primary text-primary' : 'border-transparent text-text-muted'}`}
+        >
+          1. Edit Content
+        </button>
+        <button
+          onClick={() => setActiveTab('preview')}
+          className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2 ${activeTab === 'preview' ? 'border-primary text-primary' : 'border-transparent text-text-muted'}`}
+        >
+          2. Live Preview
+        </button>
+      </div>
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Editor Side */}
+        <div className={`flex-1 overflow-y-auto w-full lg:w-1/2 ${(activeTab === 'preview' && window.innerWidth < 1024) ? 'hidden' : 'block'}`}>
+          <div className="container py-8 md:py-12 max-w-4xl">
             {type?.id === 'cv' ? (
               <CVEditor data={data || {}} onChange={handleChange} onListUpdate={handleListUpdate} onAddList={addListItem} onRemoveList={removeListItem} aiTone={aiTone} />
             ) : type?.id === 'tenancy' || type?.id === 'shop_tenancy' ? (
@@ -1075,45 +1245,63 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
               <GenericEditor data={data || {}} onChange={handleChange} />
             )}
           </div>
+        </div>
 
-          {/* Preview Section */}
-          <div className="w-full py-12 border-t border-card-border">
-            <h2 className="text-2xl font-bold mb-8 text-center">Live Preview</h2>
-            {(type.id === 'cv' || type.id === 'tenancy' || type.id === 'shop_tenancy') && (
-              <div className="flex justify-center gap-4 mb-8 no-print">
-                {TEMPLATES.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => setTemplate(t.id)}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${template === t.id ? 'bg-primary text-white shadow-lg' : 'bg-card-bg text-text-muted hover:text-white border border-card-border'}`}
-                  >
-                    {t.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="preview-pane p-4 md:p-12 rounded-2xl">
-              <div className="document-page">
+        {/* Preview Side (Desktop & Mobile Preview Tab) */}
+        <div className={`flex-1 bg-black/5 overflow-y-auto lg:border-l lg:border-card-border ${(activeTab === 'edit' && window.innerWidth < 1024) ? 'hidden' : 'block'}`}>
+          <div className="py-8 md:py-12 flex flex-col items-center">
+            <div className="mb-8 flex flex-col items-center gap-4 w-full px-4">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-text-muted">Live Document Preview</h3>
+              {(type.id === 'cv' || type.id === 'tenancy' || type.id === 'shop_tenancy') && (
+                <div className="flex gap-2 bg-black/10 p-1 rounded-xl overflow-x-auto max-w-full no-scrollbar">
+                  {TEMPLATES.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setTemplate(t.id)}
+                      className={`px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${template === t.id ? 'bg-white text-black shadow-md' : 'text-text-muted hover:text-white'}`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="preview-pane w-full max-w-[1000px]" style={{ '--doc-scale': docScale }}>
+              <div className="document-page shadow-2xl">
                 <PreviewContent id={type?.id} data={data || {}} template={template} />
-                <div className="page-break-hint"></div>
               </div>
+            </div>
+
+            <div className="mt-8 text-text-muted text-[10px] uppercase font-bold tracking-widest flex items-center gap-2">
+              <Shield size={12} /> Encrypted & Secure
             </div>
           </div>
         </div>
       </div>
-
     </div>
   );
 }
 
 const EditorSection = ({ icon: Icon, title, children, id }) => (
-  <div className="card !p-8 border-l-4 border-l-primary" id={id}>
-    <div className="flex items-center gap-3 mb-6">
-      <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary"><Icon size={20} /></div>
-      <h3 className="text-xl font-bold">{title}</h3>
+  <motion.div
+    initial={{ y: 20, opacity: 0 }}
+    whileInView={{ y: 0, opacity: 1 }}
+    viewport={{ once: true }}
+    className="card !p-6 md:!p-10 border-l-4 border-l-primary mb-8"
+    id={id}
+  >
+    <div className="flex items-center gap-4 mb-8">
+      <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary shadow-inner">
+        <Icon size={24} />
+      </div>
+      <div>
+        <h3 className="text-xl md:text-2xl font-bold tracking-tight">{title}</h3>
+        <div className="h-1 w-12 bg-primary/20 rounded-full mt-1"></div>
+      </div>
     </div>
-    <div className="space-y-4">{children}</div>
-  </div>
+    <div className="space-y-6">{children}</div>
+  </motion.div>
 );
 
 function CVEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, aiTone }) {
@@ -1714,42 +1902,62 @@ function GenericEditor({ data, onChange }) {
 
 function Input({ label, value, onChange, onAiClick, isAiLoading }) {
   return (
-    <div className="form-group">
-      <div className="flex justify-between items-end mb-1">
+    <div className="form-group w-full group">
+      <div className="flex justify-between items-center mb-1.5">
         <label className="label !mb-0">{label}</label>
         {onAiClick && (
-          <button
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={onAiClick}
             disabled={isAiLoading}
-            className="flex items-center gap-1 text-[10px] uppercase font-bold text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-primary hover:text-secondary transition-colors disabled:opacity-50"
           >
             {isAiLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-            Generate AI
-          </button>
+            AI Suggest
+          </motion.button>
         )}
       </div>
-      <input className="input" type="text" value={value || ''} onChange={e => onChange(e.target.value)} />
+      <div className="relative">
+        <input
+          className="input transition-all duration-300 group-hover:border-primary/50"
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={`Enter ${label.toLowerCase()}...`}
+        />
+        <div className="absolute bottom-0 left-0 h-[2px] w-0 bg-primary transition-all duration-300 group-focus-within:w-full"></div>
+      </div>
     </div>
   );
 }
 
 function TextArea({ label, value, onChange, onAiClick, isAiLoading }) {
   return (
-    <div className="form-group">
-      <div className="flex justify-between items-end mb-1">
-        {label && <label className="label !mb-0">{label}</label>}
+    <div className="form-group w-full group">
+      <div className="flex justify-between items-center mb-1.5">
+        <label className="label !mb-0">{label}</label>
         {onAiClick && (
-          <button
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={onAiClick}
             disabled={isAiLoading}
-            className="flex items-center gap-1 text-[10px] uppercase font-bold text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-primary hover:text-secondary transition-colors disabled:opacity-50"
           >
             {isAiLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-            Generate AI
-          </button>
+            AI Rewrite
+          </motion.button>
         )}
       </div>
-      <textarea className="input" rows={4} value={value || ''} onChange={e => onChange(e.target.value)} />
+      <div className="relative">
+        <textarea
+          className="input min-h-[120px] py-3 resize-y transition-all duration-300 group-hover:border-primary/50"
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={`Write your ${label.toLowerCase()} here. Use the AI tool for professional phrasing.`}
+        />
+        <div className="absolute bottom-0 left-0 h-[2px] w-0 bg-primary transition-all duration-300 group-focus-within:w-full"></div>
+      </div>
     </div>
   );
 }
