@@ -19,21 +19,14 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceChange, onLogout }) {
+export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceChange, onLogout, typePrices, onTypePriceChange }) {
     const [docs, setDocs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [newPrice, setNewPrice] = useState(currentPrice);
     const [activeTab, setActiveTab] = useState('documents'); // 'documents' or 'pricing'
 
-    // Pricing categories defaults - in a real app these session from DB
-    const [typePrices, setTypePrices] = useState({
-        cv: 20,
-        letter: 15,
-        tenancy: 50,
-        job_offer: 25,
-        invoice: 10
-    });
+    // Pricing categories defaults are now passed via props
 
     const handlePriceSubmit = () => {
         onPriceChange(parseFloat(newPrice));
@@ -195,6 +188,7 @@ export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceCh
                                         <input
                                             type="number"
                                             className="input !py-2 !px-4 font-bold !w-28 text-xl bg-white/5 border-none outline-none shadow-inner"
+                                            style={{ color: 'var(--text)' }}
                                             value={newPrice}
                                             onChange={(e) => setNewPrice(e.target.value)}
                                         />
@@ -230,8 +224,9 @@ export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceCh
                                             <input
                                                 type="number"
                                                 className="w-16 bg-transparent border-none outline-none text-right font-black text-sm"
+                                                style={{ color: 'var(--text)' }}
                                                 value={price}
-                                                onChange={(e) => setTypePrices({ ...typePrices, [type]: e.target.value })}
+                                                onChange={(e) => onTypePriceChange(type, parseFloat(e.target.value))}
                                             />
                                         </div>
                                     </div>
@@ -351,6 +346,7 @@ export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceCh
                                                             <input
                                                                 type="number"
                                                                 className="w-16 bg-transparent border-none outline-none font-black text-sm text-right"
+                                                                style={{ color: 'var(--text)' }}
                                                                 value={doc.price || currentPrice}
                                                                 onBlur={(e) => updateDocPrice(doc.id, e.target.value)}
                                                                 onChange={(e) => {

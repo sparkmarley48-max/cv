@@ -50,6 +50,7 @@ const SECTIONS = [
   { id: 'invoice', title: 'Sales Receipt / Invoice', icon: FileText, color: '#6366f1', desc: 'Professional business receipts' },
   { id: 'leave_permission', title: 'Permission to be Absent', icon: FileText, color: '#8b5cf6', desc: 'Work/Duty leave request form' },
   { id: 'employment_contract', title: 'SME Employment Contract', icon: Briefcase, color: '#0ea5e9', desc: 'Standard SME labor agreement' },
+  { id: 'qr_code', title: 'QR Code Generator', icon: Hash, color: '#f59e0b', desc: 'Custom QR codes for URLs, WiFi or text' },
 ];
 
 const TEMPLATES = [
@@ -100,11 +101,29 @@ function MainContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [currentDocId, setCurrentDocId] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [docPrice, setDocPrice] = useState(20); // Default 20 GHS
+  const [docPrice, setDocPrice] = useState(() => Number(localStorage.getItem('spark_docs_price')) || 20);
+  const [currentPrice, setCurrentPrice] = useState(null);
   const [aiTone, setAiTone] = useState('professional');
   const [darkMode, setDarkMode] = useState(localStorage.getItem('dark_mode') === 'true');
   const [showProfile, setShowProfile] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
+  const [typePrices, setTypePrices] = useState(() => {
+    const saved = localStorage.getItem('spark_type_prices');
+    return saved ? JSON.parse(saved) : {
+      cv: 20,
+      letter: 15,
+      tenancy: 50,
+      job_offer: 25,
+      invoice: 10,
+      recommendation: 20,
+      leave_permission: 15,
+      employment_contract: 40
+    };
+  });
+
+  const getActivePrice = () => {
+    return currentPrice || (selectedType && typePrices[selectedType.id]) || docPrice;
+  };
 
   useEffect(() => {
     document.body.classList.toggle('dark-mode', darkMode);
@@ -140,6 +159,7 @@ function MainContent() {
     setData(getInitialData(type.id));
     setCurrentDocId(null);
     setIsPaid(false);
+    setCurrentPrice(null);
     setView('editor');
   };
 
@@ -149,6 +169,7 @@ function MainContent() {
     setData(doc.data);
     setCurrentDocId(doc.id);
     setIsPaid(doc.is_paid);
+    setCurrentPrice(doc.price);
     setView('editor');
   };
 
@@ -173,7 +194,8 @@ function MainContent() {
         data: data,
         fullName: data.fullName || data.name || data.landlord || 'Untitled Document',
         email: data.email || 'anonymous@sparkdocs.com',
-        is_paid: isPaid || isAdmin
+        is_paid: isPaid || isAdmin,
+        price: getActivePrice()
       };
 
       if (currentDocId) {
@@ -212,7 +234,7 @@ function MainContent() {
     paystack.newTransaction({
       key: PAYSTACK_PUBLIC_KEY,
       email: data.email || 'user@example.com',
-      amount: docPrice * 100,
+      amount: getActivePrice() * 100,
       currency: 'GHS',
       onSuccess: async (transaction) => {
         setIsPaid(true);
@@ -557,6 +579,75 @@ function MainContent() {
           addReferencesPDF(data.references, 10);
         }
       }
+    } else if (selectedType.id === 'letter') {
+      const isMinimal = selectedTemplate === 'minimal';
+      const isModern = selectedTemplate === 'modern';
+
+      if (isModern) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(0, 0, 210, 50, 'F');
+        doc.setDrawColor('#6366f1');
+        doc.setLineWidth(1.5);
+        doc.line(margin, 50, 190, 50);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(26);
+        doc.setTextColor('#1e293b');
+        doc.text(data.senderName?.toUpperCase() || 'SENDER NAME', margin, 35);
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor('#64748b');
+        doc.text(`${data.senderEmail} | ${data.senderPhone} | ${data.senderAddress}`, margin, 43);
+        y = 70;
+      } else if (isMinimal) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(22);
+        doc.setTextColor('#111827');
+        doc.text(data.senderName || '', margin, 30);
+        doc.setFontSize(9);
+        doc.setTextColor('#64748b');
+        doc.text(`${data.senderEmail} • ${data.senderPhone} • ${data.senderAddress}`, margin, 38);
+        y = 60;
+      } else {
+        // Classic
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.text(data.senderName || '', 190, 30, { align: 'right' });
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(data.senderAddress || '', 190, 36, { align: 'right' });
+        doc.text(data.senderPhone || '', 190, 42, { align: 'right' });
+        doc.text(data.senderEmail || '', 190, 48, { align: 'right' });
+        y = 65;
+      }
+
+      addText(data.date || new Date().toLocaleDateString('en-GB'), 10, 'normal', '#64748b', 12);
+
+      addText('TO:', 9, 'bold', '#64748b', 2);
+      addText(data.recipient || 'Recipient Name', 11, 'bold', '#1e293b', 1);
+      if (data.recipientTitle) addText(data.recipientTitle, 10, 'italic', '#64748b', 1);
+      addText(data.company || 'Company Name', 10, 'normal', '#1e293b', 1);
+      addText(data.companyAddress || '', 10, 'normal', '#64748b', 15);
+
+      if (data.subject) {
+        addText(`RE: ${data.subject.toUpperCase()}`, 11, 'bold', '#1e293b', 12);
+      }
+
+      const bodyLines = doc.splitTextToSize(data.body, 170);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor('#334155');
+      doc.text(bodyLines, margin, y);
+      y += (bodyLines.length * 7) + 20;
+
+      addText('Sincerely,', 11);
+      y += 15;
+      doc.setDrawColor('#000');
+      doc.setLineWidth(0.5);
+      doc.line(margin, y, margin + 50, y);
+      y += 5;
+      addText(data.senderName, 11, 'bold');
     } else if (selectedType.id === 'recommendation') {
       addText('LETTER OF RECOMMENDATION', 18, 'bold', '#8b5cf6', 15);
       addText(`Date: ${new Date().toLocaleDateString('en-GB')}`, 10, 'normal', '#64748b', 10);
@@ -568,6 +659,22 @@ function MainContent() {
       doc.line(margin, y, margin + 60, y); y += 5;
       addText(data.recommenderName, 11, 'bold');
       addText(`${data.recommenderTitle} | ${data.recommenderOrg}`, 10);
+    } else if (selectedType.id === 'qr_code') {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(24);
+      doc.setTextColor('#f59e0b');
+      doc.text(data.label?.toUpperCase() || 'QR CODE', 105, 40, { align: 'center' });
+
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(data.content || '')}`;
+      try {
+        doc.addImage(qrUrl, 'PNG', 55, 60, 100, 100);
+      } catch (e) {
+        addText("Failed to embed QR code image.", 10, 'italic', '#ef4444', 10, 105);
+      }
+
+      y = 180;
+      addText(data.content || '', 10, 'normal', '#64748b', 10, 105);
+      addText("Generated via SPARK DOCS", 8, 'bold', '#94a3b8', 10, 105);
     } else if (selectedType.id === 'job_offer') {
       addText('JOB OFFER LETTER', 20, 'bold', '#10b981', 4);
       addText(data.companyName, 12, 'bold', '#64748b', 15);
@@ -707,20 +814,64 @@ function MainContent() {
         doc.text('This document is generated via SPARK DOCS and must be registered with the Rent Control Department.', 105, 285, { align: 'center' });
       }
     } else if (selectedType.id === 'invoice') {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(24);
-      doc.setTextColor('#6366f1');
-      doc.text(data.businessName || 'INVOICE', margin, 30);
+      if (data.showWatermark) {
+        doc.saveGraphicsState();
+        doc.setGState(new doc.GState({ opacity: 0.05 }));
+        if (data.watermarkType === 'logo' && data.businessLogo) {
+          try {
+            doc.addImage(data.businessLogo, 'JPEG', 50, 100, 110, 110, undefined, 'FAST');
+          } catch (e) {
+            console.error("Watermark Logo Error:", e);
+          }
+        } else {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(50);
+          doc.setTextColor('#000000');
+          doc.text(data.businessName || 'INVOICE', 105, 150, { align: 'center', angle: 45 });
+        }
+        doc.restoreGraphicsState();
+      }
 
-      doc.setTextColor('#1e293b');
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`TIN: ${data.businessTin || 'N/A'}`, margin, 38);
-      doc.text(data.businessAddress || '', margin, 43);
-      doc.text(`${data.businessPhone} | ${data.businessEmail}`, margin, 48);
+      if (data.businessLogo) {
+        try {
+          doc.addImage(data.businessLogo, 'JPEG', margin, 20, 25, 25);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(24);
+          doc.setTextColor('#6366f1');
+          doc.text(data.businessName || 'INVOICE', margin + 30, 30);
+
+          doc.setTextColor('#1e293b');
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'normal');
+          doc.text(`TIN: ${data.businessTin || 'N/A'}`, margin + 30, 38);
+          doc.text(data.businessAddress || '', margin + 30, 43);
+          doc.text(`${data.businessPhone} | ${data.businessEmail}`, margin + 30, 48);
+        } catch (e) {
+          console.error("Logo Error:", e);
+          // Fallback to text if logo fails
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(24);
+          doc.setTextColor('#6366f1');
+          doc.text(data.businessName || 'INVOICE', margin, 30);
+          // ... rest of header ...
+        }
+      } else {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(24);
+        doc.setTextColor('#6366f1');
+        doc.text(data.businessName || 'INVOICE', margin, 30);
+
+        doc.setTextColor('#1e293b');
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`TIN: ${data.businessTin || 'N/A'}`, margin, 38);
+        doc.text(data.businessAddress || '', margin, 43);
+        doc.text(`${data.businessPhone} | ${data.businessEmail}`, margin, 48);
+      }
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(14);
+      doc.setTextColor('#1e293b');
       doc.text('INVOICE', 160, 30, { align: 'right' });
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
@@ -745,16 +896,30 @@ function MainContent() {
       y += 15;
       doc.setFont('helvetica', 'normal');
       data.items?.forEach(item => {
-        const amt = (item.qty * item.price).toFixed(2);
+        const q = parseFloat(item.qty);
+        const p = parseFloat(item.price);
+        const isQNumeric = !isNaN(q) && item.qty !== '' && item.qty !== null && item.qty !== 'N/A';
+        const isPNumeric = !isNaN(p) && item.price !== '' && item.price !== null && item.price !== 'N/A';
+
+        const lineAmt = isQNumeric && isPNumeric ? q * p : (isPNumeric ? p : 0);
+        const displayQty = isQNumeric ? String(item.qty) : 'N/A';
+        const displayPrice = isPNumeric ? p.toFixed(2) : 'N/A';
+
         doc.text(item.desc, margin + 5, y);
-        doc.text(item.qty.toString(), 120, y, { align: 'center' });
-        doc.text(item.price.toFixed(2), 145, y, { align: 'right' });
-        doc.text(amt, 185, y, { align: 'right' });
+        doc.text(displayQty, 120, y, { align: 'center' });
+        doc.text(displayPrice, 145, y, { align: 'right' });
+        doc.text(lineAmt.toFixed(2), 185, y, { align: 'right' });
         y += 8;
       });
 
       y += 10;
-      const subtotal = data.items?.reduce((sum, item) => sum + (item.qty * item.price), 0) || 0;
+      const subtotal = data.items?.reduce((sum, item) => {
+        const q = parseFloat(item.qty);
+        const p = parseFloat(item.price);
+        const isQNumeric = !isNaN(q) && item.qty !== '' && item.qty !== null && item.qty !== 'N/A';
+        const isPNumeric = !isNaN(p) && item.price !== '' && item.price !== null && item.price !== 'N/A';
+        return sum + (isQNumeric && isPNumeric ? q * p : (isPNumeric ? p : 0));
+      }, 0) || 0;
       const tax = subtotal * (data.taxRate / 100);
       const total = subtotal + tax;
 
@@ -918,6 +1083,12 @@ function MainContent() {
             onBack={() => setView('landing')}
             currentPrice={docPrice}
             onPriceChange={(p) => { setDocPrice(p); localStorage.setItem('spark_docs_price', p); }}
+            typePrices={typePrices}
+            onTypePriceChange={(type, p) => {
+              const newPrices = { ...typePrices, [type]: p };
+              setTypePrices(newPrices);
+              localStorage.setItem('spark_type_prices', JSON.stringify(newPrices));
+            }}
             onLogout={async () => { await supabase.auth.signOut(); setView('landing'); }}
           />
         ) : view === 'admin_login' ? (
@@ -937,6 +1108,7 @@ function MainContent() {
             isSaving={isSaving}
             aiTone={aiTone}
             setAiTone={setAiTone}
+            isPaid={isPaid}
           />
         )}
       </AnimatePresence>
@@ -971,7 +1143,7 @@ function MainContent() {
 
             <h2 className="text-3xl font-bold mb-3 tracking-tight">Generate Final PDF</h2>
             <p className="text-text-muted mb-10 leading-relaxed px-4">
-              Your professional document is ready. Gain full access and download in high-quality PDF for only <span className="text-primary font-bold">GH₵{docPrice}</span>.
+              Your professional document is ready. Gain full access and download in high-quality PDF for only <span className="text-primary font-bold">GH₵{getActivePrice()}</span>.
             </p>
 
             <div className="space-y-4">
@@ -1121,14 +1293,21 @@ function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
   );
 }
 
-function EditorPage({ type, data, setData, template, setTemplate, onBack, onDownload, onSave, isAdmin, isSaving, aiTone, setAiTone }) {
+function EditorPage({ type, data, setData, template, setTemplate, onBack, onDownload, onSave, isAdmin, isSaving, aiTone, setAiTone, isPaid }) {
   const [activeTab, setActiveTab] = useState('edit'); // 'edit', 'preview'
   const [docScale, setDocScale] = useState(1);
   const [lastSaved, setLastSaved] = useState(null);
+  const [showAiNotice, setShowAiNotice] = useState(false);
 
   useEffect(() => {
     if (!isSaving) setLastSaved(new Date().toLocaleTimeString());
   }, [isSaving]);
+  useEffect(() => {
+    if (showAiNotice) {
+      const timer = setTimeout(() => setShowAiNotice(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showAiNotice]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -1146,6 +1325,51 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Security Logic: Disable Right-Click and Copying for Unpaid Users
+  useEffect(() => {
+    if (isPaid || isAdmin) return;
+
+    const handleContextMenu = (e) => {
+      if (e.target.closest('.document-page')) {
+        e.preventDefault();
+        alert('Please pay to unlock the full document.');
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      // Prevent Ctrl+P, Ctrl+S, Ctrl+C
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 's' || e.key === 'c' || e.key === 'u')) {
+        if (activeTab === 'preview') {
+          e.preventDefault();
+          alert('This feature is locked until payment.');
+        }
+      }
+    };
+
+    document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPaid, isAdmin, activeTab]);
+
+  // Anti-Debug: Triggers a breakpoint if console is open
+  useEffect(() => {
+    if (isPaid || isAdmin) return;
+    const detector = setInterval(() => {
+      const start = new Date();
+      debugger; // This will pause the JS if DevTools is open
+      const end = new Date();
+      if (end - start > 100) {
+        // DevTools likely open
+        console.clear();
+        console.log("%cSECURITY ALERT: Unauthorized access to source detected.", "color: red; font-size: 20px; font-weight: bold;");
+      }
+    }, 1000);
+    return () => clearInterval(detector);
+  }, [isPaid, isAdmin]);
+
   const handleChange = (field, value) => setData(prev => ({ ...prev, [field]: value }));
   const handleListUpdate = (key, idx, field, value) => {
     const list = [...data[key]];
@@ -1154,6 +1378,8 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
   };
   const addListItem = (key, item) => setData(prev => ({ ...prev, [key]: [...prev[key], item] }));
   const removeListItem = (key, idx) => setData(prev => ({ ...prev, [key]: prev[key].filter((_, i) => i !== idx) }));
+
+  const [showStyle, setShowStyle] = useState(false);
 
   return (
     <div className="flex flex-col h-dvh overflow-hidden w-full bg-bg">
@@ -1192,6 +1418,14 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
             </div>
 
             <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setShowStyle(!showStyle)}
+              className={`btn btn-ghost !p-2 ${showStyle ? 'text-primary' : ''}`}
+            >
+              <Heart size={20} className={showStyle ? 'fill-current' : ''} />
+            </motion.button>
+
+            <motion.button
               whileTap={{ scale: 0.95 }}
               className="btn btn-primary !py-2 !px-4 md:!px-6 shadow-lg"
               onClick={onDownload}
@@ -1204,6 +1438,61 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
           </div>
         </div>
       </header>
+
+      <AnimatePresence>
+        {showStyle && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-card-bg border-b border-card-border overflow-hidden"
+          >
+            <div className="container py-4 flex flex-wrap items-center gap-8">
+              <div className="flex items-center gap-3">
+                <label className="text-[10px] font-black uppercase text-text-muted">Accent Color</label>
+                <input
+                  type="color"
+                  value={data.accentColor || '#6366f1'}
+                  onChange={(e) => handleChange('accentColor', e.target.value)}
+                  className="w-10 h-10 border-none bg-transparent cursor-pointer rounded-lg overflow-hidden"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-[10px] font-black uppercase text-text-muted">Text Color</label>
+                <input
+                  type="color"
+                  value={data.textColor || '#111827'}
+                  onChange={(e) => handleChange('textColor', e.target.value)}
+                  className="w-10 h-10 border-none bg-transparent cursor-pointer rounded-lg overflow-hidden"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-[10px] font-black uppercase text-text-muted">Template</label>
+                <div className="flex bg-black/10 p-1 rounded-xl">
+                  {['classic', 'modern', 'minimal'].map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setTemplate(t)}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${template === t ? 'bg-white text-black shadow-sm' : 'text-text-muted hover:text-white'}`}
+                    >
+                      {t.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  handleChange('accentColor', '#6366f1');
+                  handleChange('textColor', '#111827');
+                }}
+                className="text-[10px] font-bold text-primary hover:text-secondary uppercase underline ml-auto"
+              >
+                Reset Colors
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Mobile Tab Bar */}
       <div className="lg:hidden flex border-b border-card-border bg-card-bg/50 backdrop-blur-md">
@@ -1226,19 +1515,23 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
         <div className={`flex-1 overflow-y-auto w-full lg:w-1/2 ${(activeTab === 'preview' && window.innerWidth < 1024) ? 'hidden' : 'block'}`}>
           <div className="container py-8 md:py-12 max-w-4xl">
             {type?.id === 'cv' ? (
-              <CVEditor data={data || {}} onChange={handleChange} onListUpdate={handleListUpdate} onAddList={addListItem} onRemoveList={removeListItem} aiTone={aiTone} />
+              <CVEditor data={data || {}} onChange={handleChange} onListUpdate={handleListUpdate} onAddList={addListItem} onRemoveList={removeListItem} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
             ) : type?.id === 'tenancy' || type?.id === 'shop_tenancy' ? (
               <TenancyEditor data={data || {}} onChange={handleChange} />
             ) : type?.id === 'invoice' ? (
               <InvoiceEditor data={data || {}} onChange={handleChange} onListUpdate={handleListUpdate} onAddList={addListItem} onRemoveList={removeListItem} />
             ) : type?.id === 'leave_permission' ? (
-              <LeaveEditor data={data || {}} onChange={handleChange} aiTone={aiTone} />
+              <LeaveEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
             ) : type?.id === 'employment_contract' ? (
               <ContractEditor data={data || {}} onChange={handleChange} />
             ) : type?.id === 'recommendation' ? (
-              <RecommendationEditor data={data || {}} onChange={handleChange} aiTone={aiTone} />
+              <RecommendationEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
+            ) : type?.id === 'letter' ? (
+              <LetterEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
             ) : type?.id === 'job_offer' ? (
-              <JobOfferEditor data={data || {}} onChange={handleChange} aiTone={aiTone} />
+              <JobOfferEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
+            ) : type?.id === 'qr_code' ? (
+              <QRCodeEditor data={data || {}} onChange={handleChange} />
             ) : type?.id === 'rent_receipt' ? (
               <RentReceiptEditor data={data || {}} onChange={handleChange} />
             ) : (
@@ -1247,12 +1540,33 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
           </div>
         </div>
 
+        <AnimatePresence>
+          {showAiNotice && (
+            <motion.div
+              initial={{ y: -100, opacity: 0, x: '-50%' }}
+              animate={{ y: 0, opacity: 1, x: '-50%' }}
+              exit={{ y: -100, opacity: 0, x: '-50%' }}
+              className="fixed top-24 left-1/2 z-[100] bg-white/10 backdrop-blur-2xl text-white px-5 py-3 rounded-full shadow-[0_0_40px_rgba(0,0,0,0.5)] flex items-center gap-3 border border-white/20 w-[92%] max-w-sm cursor-pointer hover:bg-white/20 transition-colors"
+              onClick={() => setShowAiNotice(false)}
+            >
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shrink-0 shadow-lg">
+                <Sparkles size={16} className="text-white animate-pulse" />
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <p className="font-bold text-[11px] leading-tight uppercase tracking-wider text-white">AI Suggestion Added</p>
+                <p className="text-[10px] opacity-70 truncate font-medium">Please cross-check bracketed [placeholders].</p>
+              </div>
+              <X size={14} className="opacity-40" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Preview Side (Desktop & Mobile Preview Tab) */}
         <div className={`flex-1 bg-black/5 overflow-y-auto lg:border-l lg:border-card-border ${(activeTab === 'edit' && window.innerWidth < 1024) ? 'hidden' : 'block'}`}>
           <div className="py-8 md:py-12 flex flex-col items-center">
             <div className="mb-8 flex flex-col items-center gap-4 w-full px-4">
               <h3 className="text-sm font-bold uppercase tracking-widest text-text-muted">Live Document Preview</h3>
-              {(type.id === 'cv' || type.id === 'tenancy' || type.id === 'shop_tenancy') && (
+              {(type.id === 'cv' || type.id === 'tenancy' || type.id === 'shop_tenancy' || type.id === 'letter') && (
                 <div className="flex gap-2 bg-black/10 p-1 rounded-xl overflow-x-auto max-w-full no-scrollbar">
                   {TEMPLATES.map(t => (
                     <button
@@ -1267,9 +1581,11 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
               )}
             </div>
 
-            <div className="preview-pane w-full max-w-[1000px]" style={{ '--doc-scale': docScale }}>
-              <div className="document-page shadow-2xl">
-                <PreviewContent id={type?.id} data={data || {}} template={template} />
+            <div className="preview-pane w-full max-w-[1000px] overflow-x-hidden" style={{ '--doc-scale': docScale }}>
+              <div className={`document-page shadow-2xl ${(!isPaid && !isAdmin) ? 'document-protected' : ''}`}>
+                <div className={(!isPaid && !isAdmin) ? 'content-blur' : ''}>
+                  <PreviewContent id={type?.id} data={data || {}} template={template} isPaid={isPaid} isAdmin={isAdmin} />
+                </div>
               </div>
             </div>
 
@@ -1304,7 +1620,87 @@ const EditorSection = ({ icon: Icon, title, children, id }) => (
   </motion.div>
 );
 
-function CVEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, aiTone }) {
+function QRCodeEditor({ data, onChange }) {
+  if (!data) return null;
+  return (
+    <div className="space-y-12 pb-20 px-safe">
+      <EditorSection icon={Hash} title="1. QR Content" id="qr-content">
+        <Input label="QR Label / Title" value={data.label} onChange={v => onChange('label', v)} />
+        <TextArea label="Content (URL, Phone, or Text)" value={data.content} onChange={v => onChange('content', v)} />
+      </EditorSection>
+      <EditorSection icon={Sparkles} title="2. Design Tips" id="qr-tips">
+        <div className="p-6 bg-primary/5 rounded-2xl border border-primary/10">
+          <p className="text-sm text-text-muted leading-relaxed">
+            Your QR code will update in real-time. You can use it for:
+            <br /><br />
+            • <strong>URLs:</strong> https://mysite.com
+            <br />• <strong>Phone:</strong> tel:+123456789
+            <br />• <strong>Plain Text:</strong> Any message you want
+          </p>
+        </div>
+      </EditorSection>
+    </div>
+  );
+}
+
+function LetterEditor({ data, onChange, aiTone, onAiUse }) {
+  if (!data) return null;
+  const [aiLoading, setAiLoading] = React.useState({});
+
+  const handleAiSuggestion = async (field, prompt, systemPrompt) => {
+    setAiLoading(prev => ({ ...prev, [field]: true }));
+    try {
+      const result = await generateCVContent(prompt, systemPrompt);
+      onChange(field, result);
+      if (onAiUse) onAiUse();
+    } catch (err) { console.error(err); alert("Failed to generate AI content."); }
+    finally { setAiLoading(prev => ({ ...prev, [field]: false })); }
+  };
+
+  return (
+    <div className="space-y-12 pb-20 px-safe">
+      <EditorSection icon={User} title="1. Your Details (Sender)" id="sender">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Input label="Your Full Name" value={data.senderName} onChange={v => onChange('senderName', v)} />
+          <Input label="Your Phone" value={data.senderPhone} onChange={v => onChange('senderPhone', v)} />
+          <Input label="Your Email" value={data.senderEmail} onChange={v => onChange('senderEmail', v)} />
+          <Input label="Date" value={data.date} onChange={v => onChange('date', v)} />
+          <div className="md:col-span-2">
+            <Input label="Your Address" value={data.senderAddress} onChange={v => onChange('senderAddress', v)} />
+          </div>
+        </div>
+      </EditorSection>
+
+      <EditorSection icon={Briefcase} title="2. Recipient Details" id="recipient">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Input label="Recipient Name" value={data.recipient} onChange={v => onChange('recipient', v)} />
+          <Input label="Job Title / Department" value={data.recipientTitle} onChange={v => onChange('recipientTitle', v)} />
+          <Input label="Company Name" value={data.company} onChange={v => onChange('company', v)} />
+          <div className="md:col-span-2">
+            <Input label="Company Address" value={data.companyAddress} onChange={v => onChange('companyAddress', v)} />
+          </div>
+        </div>
+      </EditorSection>
+
+      <EditorSection icon={Sparkles} title="3. Letter Content" id="content">
+        <Input label="Subject Line (Optional)" value={data.subject} onChange={v => onChange('subject', v)} />
+        <TextArea
+          label="Letter Body"
+          value={data.body}
+          onChange={v => onChange('body', v)}
+          onAiClick={() => handleAiSuggestion(
+            'body',
+            `Write or refine a cover letter body. Context: Sender ${data.senderName} applying to ${data.company || '[Company Name]'} for the role of ${data.recipientTitle || '[Job Title]'}. Tone: ${aiTone}. Current text: ${data.body}`,
+            `You are an expert career coach and professional writer. Improve the provided cover letter text. Use a ${aiTone} tone. Use the specific company (${data.company}) and job title (${data.recipientTitle}) provided to make it highly personalized. If any details are unknown, use placeholders like [Industry]. Output the text directly.`
+          )}
+          isAiLoading={aiLoading['body']}
+        />
+      </EditorSection>
+    </div>
+  );
+}
+
+function CVEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, aiTone, onAiUse }) {
   if (!data) return <div className="p-12 text-center text-text-muted">No editor data available.</div>;
   const [aiLoading, setAiLoading] = React.useState({});
 
@@ -1313,6 +1709,7 @@ function CVEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, aiTon
     try {
       const result = await generateCVContent(prompt, systemPrompt);
       onChange(field, result);
+      if (onAiUse) onAiUse();
     } catch (err) {
       console.error(err);
       alert("Failed to generate AI content. Please check your connection or console for details.");
@@ -1327,6 +1724,7 @@ function CVEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, aiTon
     try {
       const result = await generateCVContent(prompt, systemPrompt);
       onListUpdate(key, idx, field, result);
+      if (onAiUse) onAiUse();
     } catch (err) {
       console.error(err);
       alert("Failed to generate AI content. Please check your connection or console for details.");
@@ -1397,8 +1795,8 @@ function CVEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, aiTon
           onChange={v => onChange('summary', v)}
           onAiClick={() => handleAiSuggestion(
             'summary',
-            `Write a professional CV summary for ${data.fullName || 'a professional'}${data.experience?.[0]?.title ? ' who works as a ' + data.experience[0].title : ''}. Keep it concise, high-impact, and professional.`,
-            "You are a professional CV summary writer. Output the text directly without any quotation marks."
+            `Write a high-impact professional CV summary for ${data.fullName || 'a professional'}. Current/Target Role: ${data.experience?.[0]?.title || '[Job Title]'}. Field: ${data.experience?.[0]?.company || '[Industry]'}. Tone: ${aiTone}.`,
+            "You are a master CV writer. Create a powerful 3-4 sentence professional summary. Use the provided Job Title and Company context to make it specific. Use [Placeholders] for missing years of experience."
           )}
           isAiLoading={aiLoading['summary']}
         />
@@ -1609,6 +2007,28 @@ function InvoiceEditor({ data, onChange, onListUpdate, onAddList, onRemoveList }
 
       <EditorSection icon={Briefcase} title="2. Your Business Info" id="business-info">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="md:col-span-2">
+            <label className="label">Business Logo</label>
+            <div className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-dashed border-card-border">
+              <div className="w-16 h-16 rounded-xl bg-card-bg border border-card-border overflow-hidden flex items-center justify-center">
+                {data.businessLogo ? <img src={data.businessLogo} className="w-full h-full object-contain" /> : <Camera size={24} className="text-text-muted" />}
+              </div>
+              <div className="flex flex-col gap-2">
+                <input type="file" accept="image/*" className="hidden" id="logo-upload" onChange={(e) => {
+                  const file = e.target.files[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => onChange('businessLogo', reader.result);
+                    reader.readAsDataURL(file);
+                  }
+                }} />
+                <div className="flex gap-2">
+                  <label htmlFor="logo-upload" className="btn btn-primary !py-1.5 !px-3 text-[10px] cursor-pointer">Upload Logo</label>
+                  {data.businessLogo && <button onClick={() => onChange('businessLogo', null)} className="btn btn-ghost !py-1.5 !px-3 text-[10px]">Remove</button>}
+                </div>
+              </div>
+            </div>
+          </div>
           <Input label="Business Name" value={data.businessName} onChange={v => onChange('businessName', v)} />
           <Input label="Business TIN" value={data.businessTin} onChange={v => onChange('businessTin', v)} />
           <Input label="Phone" value={data.businessPhone} onChange={v => onChange('businessPhone', v)} />
@@ -1616,6 +2036,68 @@ function InvoiceEditor({ data, onChange, onListUpdate, onAddList, onRemoveList }
           <div className="md:col-span-2">
             <Input label="Address" value={data.businessAddress} onChange={v => onChange('businessAddress', v)} />
           </div>
+        </div>
+      </EditorSection>
+
+      <EditorSection icon={Sparkles} title="3. Watermark Settings" id="watermark">
+        <div className="flex flex-col gap-6">
+          <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-card-border">
+            <div>
+              <h4 className="font-bold text-sm">Document Watermark</h4>
+              <p className="text-[10px] text-text-muted uppercase font-bold mt-1">Add a faded background identifier</p>
+            </div>
+            <button
+              onClick={() => onChange('showWatermark', !data.showWatermark)}
+              style={{
+                width: '64px',
+                height: '32px',
+                backgroundColor: data.showWatermark ? 'var(--primary)' : '#334155',
+                borderRadius: '32px',
+                position: 'relative',
+                border: '2px solid rgba(255,255,255,0.1)',
+                cursor: 'pointer',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: data.showWatermark ? '0 0 20px var(--primary-glow)' : 'none',
+                display: 'block',
+                flexShrink: 0
+              }}
+              aria-label="Toggle Watermark"
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '2px',
+                  left: data.showWatermark ? '34px' : '2px',
+                  width: '24px',
+                  height: '24px',
+                  backgroundColor: 'white',
+                  borderRadius: '50%',
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+                }}
+              />
+            </button>
+          </div>
+
+          {data.showWatermark && (
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => onChange('watermarkType', 'text')}
+                className={`p-4 rounded-2xl border-2 transition-all text-center ${data.watermarkType === 'text' ? 'border-primary bg-primary/5' : 'border-card-border bg-white/5'}`}
+              >
+                <div className="text-xs font-bold uppercase mb-1">Business Name</div>
+                <div className="text-[10px] text-text-muted line-clamp-1">{data.businessName || 'Your Name'}</div>
+              </button>
+              <button
+                onClick={() => onChange('watermarkType', 'logo')}
+                className={`p-4 rounded-2xl border-2 transition-all text-center ${data.watermarkType === 'logo' ? 'border-primary bg-primary/5' : 'border-card-border bg-white/5'}`}
+                disabled={!data.businessLogo}
+              >
+                <div className="text-xs font-bold uppercase mb-1">Company Logo</div>
+                <div className="text-[10px] text-text-muted">{data.businessLogo ? 'Ready' : 'Upload logo first'}</div>
+              </button>
+            </div>
+          )}
         </div>
       </EditorSection>
 
@@ -1646,13 +2128,59 @@ function InvoiceEditor({ data, onChange, onListUpdate, onAddList, onRemoveList }
                 <div className="md:col-span-2">
                   <Input label="Description" value={item.desc} onChange={v => onListUpdate('items', i, 'desc', v)} />
                 </div>
-                <Input label="Qty" value={item.qty} onChange={v => onListUpdate('items', i, 'qty', parseFloat(v) || 0)} />
-                <Input label="Unit Price (GHS)" value={item.price} onChange={v => onListUpdate('items', i, 'price', parseFloat(v) || 0)} />
+                <div className="form-group">
+                  <label className="label">Qty</label>
+                  <div className="flex gap-2">
+                    <select
+                      className="input !w-auto !py-0 !px-2 text-xs"
+                      style={{ color: 'var(--text)' }}
+                      value={item.qty === 'N/A' ? 'N/A' : 'Val'}
+                      onChange={(e) => onListUpdate('items', i, 'qty', e.target.value === 'N/A' ? 'N/A' : '')}
+                    >
+                      <option value="Val" style={{ color: '#000' }}>Value</option>
+                      <option value="N/A" style={{ color: '#000' }}>N/A</option>
+                    </select>
+                    {item.qty !== 'N/A' && (
+                      <input
+                        className="input flex-1"
+                        style={{ color: 'var(--text)' }}
+                        type="text"
+                        value={item.qty}
+                        onChange={(e) => onListUpdate('items', i, 'qty', e.target.value)}
+                        placeholder="1"
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="label">Unit Price (GHS)</label>
+                  <div className="flex gap-2">
+                    <select
+                      className="input !w-auto !py-0 !px-2 text-xs"
+                      style={{ color: 'var(--text)' }}
+                      value={item.price === 'N/A' ? 'N/A' : 'Val'}
+                      onChange={(e) => onListUpdate('items', i, 'price', e.target.value === 'N/A' ? 'N/A' : '')}
+                    >
+                      <option value="Val" style={{ color: '#000' }}>Value</option>
+                      <option value="N/A" style={{ color: '#000' }}>N/A</option>
+                    </select>
+                    {item.price !== 'N/A' && (
+                      <input
+                        className="input flex-1"
+                        style={{ color: 'var(--text)' }}
+                        type="text"
+                        value={item.price}
+                        onChange={(e) => onListUpdate('items', i, 'price', e.target.value)}
+                        placeholder="0.00"
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
             </Reorder.Item>
           ))}
         </Reorder.Group>
-        <button onClick={() => onAddList('items', { id: Date.now(), desc: '', qty: 1, price: 0 })} className="btn btn-ghost w-full border-dashed"><Plus size={18} /> Add Item</button>
+        <button onClick={() => onAddList('items', { id: Date.now(), desc: '', qty: '', price: '' })} className="btn btn-ghost w-full border-dashed"><Plus size={18} /> Add Item</button>
         <div className="pt-4 border-t border-card-border">
           <Input label="Tax Rate (%) e.g. 15 for VAT" value={data.taxRate} onChange={v => onChange('taxRate', parseFloat(v) || 0)} />
         </div>
@@ -1665,7 +2193,7 @@ function InvoiceEditor({ data, onChange, onListUpdate, onAddList, onRemoveList }
   );
 }
 
-function LeaveEditor({ data, onChange, aiTone }) {
+function LeaveEditor({ data, onChange, aiTone, onAiUse }) {
   if (!data) return null;
   const [aiLoading, setAiLoading] = React.useState({});
 
@@ -1674,6 +2202,7 @@ function LeaveEditor({ data, onChange, aiTone }) {
     try {
       const result = await generateCVContent(prompt, systemPrompt);
       onChange(field, result);
+      if (onAiUse) onAiUse();
     } catch (err) {
       console.error(err);
       alert("Failed to generate AI content.");
@@ -1716,8 +2245,8 @@ function LeaveEditor({ data, onChange, aiTone }) {
           onChange={v => onChange('reason', v)}
           onAiClick={() => handleAiSuggestion(
             'reason',
-            `Rewrite this reason for leave professionally: "${data.reason}". Keep it formal, clear, and concise for a workplace absence request.`,
-            "You are a professional administrative assistant. Do not use quotation marks."
+            `Rewrite this reason for leave professionally: "${data.reason}". Context: Employee ${data.employeeName} working as ${data.position} in ${data.department} department. Tone: Professional/Formal.`,
+            "You are a professional administrative assistant. Output the text directly. If details are missing, use [Placeholders]."
           )}
           isAiLoading={aiLoading['reason']}
         />
@@ -1766,7 +2295,7 @@ function ContractEditor({ data, onChange }) {
   );
 }
 
-function RecommendationEditor({ data, onChange, aiTone }) {
+function RecommendationEditor({ data, onChange, aiTone, onAiUse }) {
   if (!data) return null;
   const [aiLoading, setAiLoading] = React.useState({});
   const handleAiSuggestion = async (field, prompt, systemPrompt) => {
@@ -1774,6 +2303,7 @@ function RecommendationEditor({ data, onChange, aiTone }) {
     try {
       const result = await generateCVContent(prompt, systemPrompt);
       onChange(field, result);
+      if (onAiUse) onAiUse();
     } catch (err) { console.error(err); alert("Failed to generate AI content."); }
     finally { setAiLoading(prev => ({ ...prev, [field]: false })); }
   };
@@ -1812,7 +2342,7 @@ function RecommendationEditor({ data, onChange, aiTone }) {
   );
 }
 
-function JobOfferEditor({ data, onChange, aiTone }) {
+function JobOfferEditor({ data, onChange, aiTone, onAiUse }) {
   if (!data) return null;
   const [aiLoading, setAiLoading] = React.useState({});
   const handleAiSuggestion = async (field, prompt, systemPrompt) => {
@@ -1820,6 +2350,7 @@ function JobOfferEditor({ data, onChange, aiTone }) {
     try {
       const result = await generateCVContent(prompt, systemPrompt);
       onChange(field, result);
+      if (onAiUse) onAiUse();
     } catch (err) { console.error(err); alert("Failed to generate AI content."); }
     finally { setAiLoading(prev => ({ ...prev, [field]: false })); }
   };
@@ -1982,7 +2513,7 @@ const QRSection = ({ data, label = "Scan to Verify" }) => {
   );
 };
 
-function TenancyPreview({ data, template }) {
+function TenancyPreview({ data, template, isPaid, isAdmin }) {
   if (!data) return null;
   const isGhana = template === 'ghana';
   const isShop = !!data.businessName;
@@ -1999,7 +2530,7 @@ function TenancyPreview({ data, template }) {
           </div>
         )}
         <h1 style={{ fontSize: '1.2rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '2px', color: accentColor }}>
-          {isShop ? 'Commercial Tenancy Agreement' : 'Tenancy Agreement'}
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{isShop ? 'Commercial Tenancy Agreement' : 'Tenancy Agreement'}</ProtectText>
         </h1>
         <div style={{ height: '2px', background: accentColor, width: '60px', margin: '0.5rem auto' }}></div>
         <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Dated: {data.agreementDate}</p>
@@ -2009,8 +2540,8 @@ function TenancyPreview({ data, template }) {
         <section style={{ marginBottom: '1.5rem' }}>
           <p>This agreement is made on <strong>{data.agreementDate}</strong> between:</p>
           <div style={{ margin: '1rem 0', paddingLeft: '1rem', borderLeft: `3px solid ${isGhana ? '#059669' : '#e2e8f0'}` }}>
-            <p><strong>LANDLORD:</strong> {data.landlordName}</p>
-            <p><strong>ADDRESS:</strong> {data.landlordAddress}</p>
+            <p><strong>LANDLORD:</strong> <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.landlordName}</ProtectText></p>
+            <p><strong>ADDRESS:</strong> <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.landlordAddress}</ProtectText></p>
             <p><strong>PHONE:</strong> {data.landlordPhone}</p>
           </div>
           <p>AND</p>
@@ -2095,20 +2626,218 @@ function TenancyPreview({ data, template }) {
   );
 }
 
-function InvoicePreview({ data }) {
+function LetterPreview({ data, template }) {
   if (!data) return null;
-  const subtotal = data.items?.reduce((sum, item) => sum + (item.qty * item.price), 0) || 0;
+  if (template === 'modern') return <ModernLetter data={data} />;
+  if (template === 'minimal') return <MinimalLetter data={data} />;
+  return <ClassicLetter data={data} />;
+}
+
+function ClassicLetter({ data }) {
+  return (
+    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
+      <div style={{ textAlign: 'right', marginBottom: '2rem' }}>
+        <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>{data.senderName}</h2>
+        <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.senderAddress}</p>
+        <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.senderPhone} | {data.senderEmail}</p>
+      </div>
+      <div style={{ marginBottom: '2rem' }}>
+        <p style={{ fontSize: '0.9rem', color: '#64748b' }}>{data.date || new Date().toLocaleDateString('en-GB')}</p>
+      </div>
+      <div style={{ marginBottom: '2rem' }}>
+        <p style={{ fontSize: '0.8rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Recipient:</p>
+        <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>{data.recipient}</h3>
+        {data.recipientTitle && <p style={{ fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>{data.recipientTitle}</p>}
+        <p style={{ fontSize: '0.85rem' }}>{data.company}</p>
+        <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.companyAddress}</p>
+      </div>
+      {data.subject && (
+        <div style={{ marginBottom: '1.5rem', paddingBottom: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>
+          <p style={{ fontSize: '1rem', fontWeight: 800 }}>RE: {data.subject.toUpperCase()}</p>
+        </div>
+      )}
+      <div style={{ fontSize: '1rem', lineHeight: '1.8', whiteSpace: 'pre-line', color: '#334155' }}>
+        {data.body}
+      </div>
+      <div style={{ marginTop: '3rem' }}>
+        <p>Sincerely,</p>
+        <div style={{ marginTop: '2rem', borderTop: '1px solid #000', width: '200px', paddingTop: '0.5rem' }}>
+          <p style={{ fontWeight: 800 }}>{data.senderName}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModernLetter({ data }) {
+  return (
+    <div className="document-cv" style={{ fontFamily: 'Outfit, sans-serif', padding: '0 !important', overflow: 'hidden' }}>
+      <header style={{ background: '#f8fafc', padding: '2.5rem 2rem', borderBottom: '4px solid #ec4899', marginBottom: '2.5rem' }}>
+        <h1 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#1e293b', marginBottom: '0.5rem' }}>{data.senderName}</h1>
+        <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem', color: '#64748b' }}>
+          <span>{data.senderEmail}</span><span>•</span><span>{data.senderPhone}</span><span>•</span><span>{data.senderAddress}</span>
+        </div>
+      </header>
+      <div style={{ padding: '0 2rem 2rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3rem' }}>
+          <div>
+            <p style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ec4899', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Applying To:</p>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{data.recipient}</h3>
+            <p style={{ fontSize: '0.9rem', color: '#64748b' }}>{data.company}</p>
+            <p style={{ fontSize: '0.9rem', color: '#64748b' }}>{data.companyAddress}</p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>{data.date || new Date().toLocaleDateString('en-GB')}</p>
+          </div>
+        </div>
+        {data.subject && (
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#1e293b', marginBottom: '1.5rem', borderLeft: '4px solid #ec4899', paddingLeft: '1rem' }}>{data.subject}</h2>
+        )}
+        <div style={{ fontSize: '1rem', lineHeight: '1.8', whiteSpace: 'pre-line', color: '#334155' }}>
+          {data.body}
+        </div>
+        <div style={{ marginTop: '4rem' }}>
+          <p style={{ fontWeight: 600, color: '#ec4899' }}>Best Regards,</p>
+          <p style={{ fontSize: '1.2rem', fontWeight: 900, marginTop: '0.5rem' }}>{data.senderName}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// DOM Poisoning & Placeholder Highlighting Utility
+const ProtectText = ({ children, isPaid, isAdmin }) => {
+  if (typeof children !== 'string') return <>{children}</>;
+
+  // Function to wrap [placeholders] in pulsing spans
+  const highlightPlaceholders = (text) => {
+    if (!text) return text;
+    const parts = text.split(/(\[.*?\])/g);
+    return parts.map((part, i) => {
+      if (typeof part === 'string' && part.startsWith('[') && part.endsWith(']')) {
+        return <span key={i} className="placeholder-beep">{part}</span>;
+      }
+      return part;
+    });
+  };
+
+  // If paid/admin, just show highlighted text
+  if (isPaid || isAdmin) {
+    return <>{highlightPlaceholders(children)}</>;
+  }
+
+  // Unpaid: Poison text AND highlight placeholders (even if blurred, it helps scrapers fail)
+  const poisoned = children.split('').map((char, i) => (
+    <React.Fragment key={i}>
+      {char}
+      <span style={{ fontSize: 0, opacity: 0, position: 'absolute', pointerEvents: 'none' }}>
+        {['#', '$', '8', 'x', '!', '?', '@', ' '][Math.floor(Math.random() * 8)]}
+      </span>
+    </React.Fragment>
+  ));
+
+  return <>{poisoned}</>;
+};
+
+function MinimalLetter({ data, isPaid, isAdmin }) {
+  const accentColor = data.accentColor || '#6366f1';
+  const textColor = data.textColor || '#111827';
+  return (
+    <div style={{ fontFamily: 'Inter, sans-serif', padding: '2rem', color: textColor }}>
+      <div style={{ marginBottom: '4rem' }}>
+        <h1 style={{ fontSize: '2.5rem', fontWeight: 300, marginBottom: '0.5rem', color: accentColor }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.senderName}</ProtectText>
+        </h1>
+        <div style={{ fontSize: '0.8rem', color: '#94a3b8', letterSpacing: '1px' }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.senderEmail}</ProtectText> • {data.senderPhone} • {data.senderAddress.toUpperCase()}
+        </div>
+      </div>
+      <div style={{ gridTemplateColumns: '1fr 2fr', display: 'grid', gap: '4rem' }}>
+        <div>
+          <div style={{ marginBottom: '2rem' }}>
+            <p style={{ fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '1rem' }}>Details</p>
+            <p style={{ fontSize: '0.85rem' }}><strong>Date:</strong> {data.date}</p>
+          </div>
+          <div style={{ marginBottom: '2rem' }}>
+            <p style={{ fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '1rem' }}>To</p>
+            <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>{data.recipient}</p>
+            <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.company}</p>
+          </div>
+        </div>
+        <div>
+          {data.subject && <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '2rem' }}>{data.subject}</h2>}
+          <div style={{ fontSize: '0.95rem', lineHeight: '1.8', whiteSpace: 'pre-line', color: '#1e293b' }}>
+            <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.body}</ProtectText>
+          </div>
+          <div style={{ marginTop: '4rem', paddingTop: '2rem', borderTop: '1px solid #f1f5f9' }}>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Sincerely,</p>
+            <p style={{ fontSize: '1.1rem', fontWeight: 600, marginTop: '0.5rem' }}>{data.senderName}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InvoicePreview({ data, isPaid, isAdmin }) {
+  if (!data) return null;
+
+  const getLineTotal = (qty, price) => {
+    const q = parseFloat(qty);
+    const p = parseFloat(price);
+    const isQNumeric = !isNaN(q) && qty !== '' && qty !== null && qty !== 'N/A';
+    const isPNumeric = !isNaN(p) && price !== '' && price !== null && price !== 'N/A';
+
+    if (isQNumeric && isPNumeric) return q * p;
+    if (isPNumeric) return p; // Assume qty 1 for total purposes if price is present
+    return 0;
+  };
+
+  const formatValue = (val) => {
+    if (val === 'N/A') return 'N/A';
+    const v = parseFloat(val);
+    if (isNaN(v) || val === '' || val === null) return 'N/A';
+    return val;
+  };
+
+  const formatCurrency = (val) => {
+    if (val === 'N/A') return 'N/A';
+    const v = parseFloat(val);
+    if (isNaN(v) || val === '' || val === null) return 'N/A';
+    return `GH₵ ${v.toFixed(2)}`;
+  };
+
+  const subtotal = data.items?.reduce((sum, item) => sum + getLineTotal(item.qty, item.price), 0) || 0;
   const tax = subtotal * (data.taxRate / 100);
   const total = subtotal + tax;
 
   return (
-    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 900, textTransform: 'uppercase', color: '#6366f1' }}>{data.businessName || 'Your Business'}</h1>
-          <p style={{ fontSize: '0.8rem', color: '#64748b' }}>{data.businessAddress}</p>
-          <p style={{ fontSize: '0.8rem', color: '#64748b' }}>TIN: {data.businessTin}</p>
-          <p style={{ fontSize: '0.8rem', color: '#64748b' }}>{data.businessPhone} | {data.businessEmail}</p>
+    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif', position: 'relative' }}>
+      {data.showWatermark && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%) rotate(-45deg)', opacity: 0.05, pointerEvents: 'none', zIndex: 0, textAlign: 'center', width: '100%' }}>
+          {data.watermarkType === 'logo' && data.businessLogo ? (
+            <img src={data.businessLogo} style={{ width: '300px', height: '300px', objectFit: 'contain' }} />
+          ) : (
+            <div style={{ fontSize: '5rem', fontWeight: 900, whiteSpace: 'nowrap', textTransform: 'uppercase' }}>{data.businessName || 'INVOICE'}</div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3rem', position: 'relative', zIndex: 1 }}>
+        <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
+          {data.businessLogo && (
+            <div style={{ width: '60px', height: '60px', flexShrink: 0 }}>
+              <img src={data.businessLogo} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            </div>
+          )}
+          <div>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 900, textTransform: 'uppercase', color: '#6366f1' }}>
+              <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.businessName || 'Your Business'}</ProtectText>
+            </h1>
+            <p style={{ fontSize: '0.8rem', color: '#64748b' }}>{data.businessAddress}</p>
+            <p style={{ fontSize: '0.8rem', color: '#64748b' }}>TIN: {data.businessTin}</p>
+            <p style={{ fontSize: '0.8rem', color: '#64748b' }}>{data.businessPhone} | {data.businessEmail}</p>
+          </div>
         </div>
         <div style={{ textAlign: 'right', display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <div style={{ textAlign: 'right' }}>
@@ -2137,14 +2866,17 @@ function InvoicePreview({ data }) {
           </tr>
         </thead>
         <tbody>
-          {data.items?.map((item, i) => (
-            <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-              <td style={{ padding: '12px', fontSize: '0.85rem' }}>{item.desc}</td>
-              <td style={{ textAlign: 'center', padding: '12px', fontSize: '0.85rem' }}>{item.qty}</td>
-              <td style={{ textAlign: 'right', padding: '12px', fontSize: '0.85rem' }}>GH₵ {item.price.toFixed(2)}</td>
-              <td style={{ textAlign: 'right', padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>GH₵ {(item.qty * item.price).toFixed(2)}</td>
-            </tr>
-          ))}
+          {data.items?.map((item, i) => {
+            const lineAmt = getLineTotal(item.qty, item.price);
+            return (
+              <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={{ padding: '12px', fontSize: '0.85rem' }}>{item.desc}</td>
+                <td style={{ textAlign: 'center', padding: '12px', fontSize: '0.85rem' }}>{formatValue(item.qty)}</td>
+                <td style={{ textAlign: 'right', padding: '12px', fontSize: '0.85rem' }}>{formatCurrency(item.price)}</td>
+                <td style={{ textAlign: 'right', padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>GH₵ {lineAmt.toFixed(2)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -2173,7 +2905,7 @@ function InvoicePreview({ data }) {
   );
 }
 
-function LeavePreview({ data }) {
+function LeavePreview({ data, isPaid, isAdmin }) {
   if (!data) return null;
   return (
     <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -2207,7 +2939,9 @@ function LeavePreview({ data }) {
         <h3 style={{ fontSize: '0.8rem', fontWeight: 800, marginBottom: '1rem' }}>Absence Particulars</h3>
         <p style={{ fontSize: '0.9rem' }}><strong>Period:</strong> {data.startDate} to {data.endDate} ({data.totalDays} Days)</p>
         <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}><strong>Reason:</strong></p>
-        <p style={{ fontSize: '0.9rem', color: '#475569', lineHeight: 1.6 }}>{data.reason}</p>
+        <p style={{ fontSize: '0.9rem', color: '#475569', lineHeight: 1.6 }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.reason}</ProtectText>
+        </p>
         <p style={{ fontSize: '0.9rem', marginTop: '1rem' }}><strong>Emergency Contact:</strong> {data.contactWhileAbsent}</p>
       </div>
 
@@ -2225,7 +2959,7 @@ function LeavePreview({ data }) {
   );
 }
 
-function ContractPreview({ data }) {
+function ContractPreview({ data, isPaid, isAdmin }) {
   if (!data) return null;
   return (
     <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -2235,7 +2969,9 @@ function ContractPreview({ data }) {
       </div>
 
       <p style={{ fontSize: '0.85rem', lineHeight: 1.6, marginBottom: '2rem' }}>
-        This Employment Agreement is made on <strong>{data.contractDate}</strong> between <strong>{data.employerName}</strong> (Employer) and <strong>{data.employeeName}</strong> (Employee).
+        <ProtectText isPaid={isPaid} isAdmin={isAdmin}>
+          {`This Employment Agreement is made on ${data.contractDate} between ${data.employerName} (Employer) and ${data.employeeName} (Employee).`}
+        </ProtectText>
       </p>
 
       <section style={{ marginBottom: '1.5rem' }}>
@@ -2277,7 +3013,7 @@ function ContractPreview({ data }) {
   );
 }
 
-function RecommendationPreview({ data }) {
+function RecommendationPreview({ data, isPaid, isAdmin }) {
   if (!data) return null;
   return (
     <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -2288,7 +3024,9 @@ function RecommendationPreview({ data }) {
         <p style={{ fontSize: '0.9rem' }}><strong>Date:</strong> {new Date().toLocaleDateString('en-GB')}</p>
         <p style={{ fontSize: '0.9rem', marginTop: '1rem' }}>To Whom It May Concern,</p>
       </div>
-      <div style={{ fontSize: '0.95rem', lineHeight: 1.8, color: '#334155', whiteSpace: 'pre-line' }}>{data.body}</div>
+      <div style={{ fontSize: '0.95rem', lineHeight: 1.8, color: '#334155', whiteSpace: 'pre-line' }}>
+        <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.body}</ProtectText>
+      </div>
       <div style={{ marginTop: '4rem' }}>
         <p style={{ fontSize: '0.95rem' }}>Sincerely,</p>
         <div style={{ marginTop: '2rem', borderTop: '1px solid #000', width: '200px', paddingTop: '0.5rem' }}>
@@ -2301,7 +3039,7 @@ function RecommendationPreview({ data }) {
   );
 }
 
-function JobOfferPreview({ data }) {
+function JobOfferPreview({ data, isPaid, isAdmin }) {
   if (!data) return null;
   return (
     <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -2332,7 +3070,7 @@ function JobOfferPreview({ data }) {
   );
 }
 
-function RentReceiptPreview({ data }) {
+function RentReceiptPreview({ data, isPaid, isAdmin }) {
   if (!data) return null;
   return (
     <div className="document-cv" style={{ fontFamily: 'Outfit, sans-serif' }}>
@@ -2348,8 +3086,10 @@ function RentReceiptPreview({ data }) {
           </div>
         </div>
         <div style={{ marginBottom: '1.5rem' }}>
-          <p style={{ fontSize: '1.1rem', marginBottom: '1.5rem' }}>Received from <strong>{data.tenantName}</strong> the sum of <strong>GHS {data.amount}</strong>.</p>
-          <p style={{ fontSize: '1rem' }}>Being rent payment for the period: <strong>{data.period}</strong>.</p>
+          <p style={{ fontSize: '1.1rem', marginBottom: '1.5rem' }}>
+            Received from <strong><ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.tenantName}</ProtectText></strong> the sum of <strong>GHS {data.amount}</strong>.
+          </p>
+          <p style={{ fontSize: '1rem' }}>Being rent payment for the period: <strong><ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.period}</ProtectText></strong>.</p>
           <p style={{ fontSize: '1rem', marginTop: '1rem' }}>Payment Method: <strong>{data.method}</strong></p>
         </div>
         <div style={{ marginTop: '4rem', display: 'flex', justifyContent: 'flex-end' }}>
@@ -2364,22 +3104,39 @@ function RentReceiptPreview({ data }) {
   );
 }
 
-function PreviewContent({ id, data, template }) {
+function PreviewContent({ id, data, template, isPaid, isAdmin }) {
   if (!data) return <div className="p-12 text-center text-text-muted">Generating preview...</div>;
   if (id === 'cv') {
-    if (template === 'modern') return <ModernCV data={data} />;
-    if (template === 'minimal') return <MinimalCV data={data} />;
-    return <ClassicCV data={data} />;
+    if (template === 'modern') return <ModernCV data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+    if (template === 'minimal') return <MinimalCV data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+    return <ClassicCV data={data} isPaid={isPaid} isAdmin={isAdmin} />;
   }
-  if (id === 'tenancy' || id === 'shop_tenancy') return <TenancyPreview data={data} template={template} />;
-  if (id === 'invoice') return <InvoicePreview data={data} />;
-  if (id === 'leave_permission') return <LeavePreview data={data} />;
-  if (id === 'employment_contract') return <ContractPreview data={data} />;
-  if (id === 'recommendation') return <RecommendationPreview data={data} />;
-  if (id === 'job_offer') return <JobOfferPreview data={data} />;
-  if (id === 'rent_receipt') return <RentReceiptPreview data={data} />;
+  if (id === 'tenancy' || id === 'shop_tenancy') return <TenancyPreview data={data} template={template} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'invoice') return <InvoicePreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'letter') return <LetterPreview data={data} template={template} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'leave_permission') return <LeavePreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'employment_contract') return <ContractPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'recommendation') return <RecommendationPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'job_offer') return <JobOfferPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'rent_receipt') return <RentReceiptPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'qr_code') return <QRCodePreview data={data} />;
 
-  return <div className="p-12 text-center">Preview coming soon for {id}</div>;
+  return <div className="p-12 text-center text-text-muted">Preview coming soon for {id}</div>;
+}
+
+function QRCodePreview({ data }) {
+  if (!data) return null;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(data.content || 'SPARK DOCS')}`;
+  return (
+    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '400px' }}>
+      <h1 style={{ fontSize: '1.5rem', fontWeight: 900, textTransform: 'uppercase', color: '#f59e0b', marginBottom: '2rem' }}>{data.label || 'Your QR Code'}</h1>
+      <div style={{ padding: '2rem', background: '#fff', borderRadius: '2rem', boxShadow: '0 20px 50px rgba(0,0,0,0.05)', border: '1px solid #f1f5f9' }}>
+        <img src={qrUrl} alt="Generated QR" style={{ width: '200px', height: '200px', display: 'block' }} />
+      </div>
+      <p style={{ marginTop: '2rem', color: '#64748b', fontSize: '0.9rem', maxWidth: '300px', wordBreak: 'break-all' }}>{data.content}</p>
+      <div style={{ marginTop: '3rem', fontSize: '0.7rem', color: '#94a3b8', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '2px' }}>Generated via SPARK DOCS ★</div>
+    </div>
+  );
 }
 
 const BulletList = ({ text, style = {} }) => {
@@ -2416,18 +3173,22 @@ const ProficiencyInfographic = ({ level, color = '#6366f1' }) => {
   );
 };
 
-function ClassicCV({ data }) {
+function ClassicCV({ data, isPaid, isAdmin }) {
+  const accentColor = data.accentColor || '#6366f1';
+  const textColor = data.textColor || '#111827';
   if (!data) return null;
   return (
-    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
-      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1.5rem', marginBottom: '1.5rem', gap: '1.5rem' }}>
+    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif', color: textColor }}>
+      <div style={{ display: 'flex', alignItems: 'center', borderBottom: `2px solid ${accentColor}`, paddingBottom: '1.5rem', marginBottom: '1.5rem', gap: '1.5rem' }}>
         {data.photo && (
           <div style={{ width: '100px', height: '100px', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
             <img src={data.photo} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${data.photoZoom || 1})`, objectPosition: `${data.photoX || 50}% ${data.photoY || 50}%` }} />
           </div>
         )}
         <div style={{ flex: 1, textAlign: data.photo ? 'left' : 'center' }}>
-          <h1 style={{ fontSize: '2rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.25rem' }}>{data.fullName}</h1>
+          <h1 style={{ fontSize: '2rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+            <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.fullName}</ProtectText>
+          </h1>
           <div style={{ fontSize: '0.85rem', color: '#64748b', display: 'flex', gap: '0.6rem', justifyContent: data.photo ? 'flex-start' : 'center', flexWrap: 'wrap' }}>
             <span>{data.email}</span>
             <span>•</span>
@@ -2440,7 +3201,9 @@ function ClassicCV({ data }) {
       </div>
       <section style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, borderLeft: '4px solid #6366f1', paddingLeft: '0.5rem', marginBottom: '0.75rem' }}>Professional Summary</h2>
-        <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>{data.summary}</p>
+        <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.summary}</ProtectText>
+        </p>
       </section>
       <section style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, borderLeft: '4px solid #6366f1', paddingLeft: '0.5rem', marginBottom: '1rem' }}>Work Experience</h2>
@@ -2505,18 +3268,22 @@ function ClassicCV({ data }) {
   );
 }
 
-function ModernCV({ data }) {
+function ModernCV({ data, isPaid, isAdmin }) {
+  const accentColor = data.accentColor || '#6366f1';
+  const textColor = data.textColor || '#111827';
   if (!data) return null;
   return (
-    <div style={{ fontFamily: 'Outfit, sans-serif', color: '#1e293b' }}>
-      <header style={{ background: '#f8fafc', padding: '2rem', margin: '-10mm -10mm 1.5rem', borderBottom: '4px solid #6366f1', display: 'flex', gap: '2rem', alignItems: 'center' }}>
+    <div style={{ fontFamily: 'Outfit, sans-serif', color: textColor }}>
+      <header style={{ background: '#f8fafc', padding: '2rem', margin: '-10mm -10mm 1.5rem', borderBottom: `4px solid ${accentColor}`, display: 'flex', gap: '2rem', alignItems: 'center' }}>
         {data.photo && (
           <div style={{ width: '120px', height: '120px', borderRadius: '12px', overflow: 'hidden', border: '4px solid white', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }}>
             <img src={data.photo} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${data.photoZoom || 1})`, objectPosition: `${data.photoX || 50}% ${data.photoY || 50}%` }} />
           </div>
         )}
         <div style={{ flex: 1 }}>
-          <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.5rem' }}>{data.fullName}</h1>
+          <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.5rem' }}>
+            <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.fullName}</ProtectText>
+          </h1>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.9rem', color: '#64748b' }}>
             <span>{data.email}</span><span>•</span><span>{data.phone}</span><span>•</span><span>{data.address}</span>
           </div>
@@ -2526,7 +3293,9 @@ function ModernCV({ data }) {
         <div className="space-y-6">
           <section>
             <h2 style={{ fontSize: '1rem', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Summary</h2>
-            <p style={{ fontSize: '0.9rem', lineHeight: '1.6' }}>{data.summary}</p>
+            <p style={{ fontSize: '0.9rem', lineHeight: '1.6' }}>
+              <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.summary}</ProtectText>
+            </p>
           </section>
           <section>
             <h2 style={{ fontSize: '1rem', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>Experience</h2>
@@ -2600,14 +3369,18 @@ const MinimalSection = ({ title, children }) => (
   </div>
 );
 
-function MinimalCV({ data }) {
+function MinimalCV({ data, isPaid, isAdmin }) {
+  const accentColor = data.accentColor || '#6366f1';
+  const textColor = data.textColor || '#111827';
   if (!data) return null;
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: '180mm', margin: '0 auto' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: '180mm', margin: '0 auto', color: textColor }}>
       <div style={{ marginBottom: '3rem', display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ fontSize: '2.5rem', fontWeight: 300, marginBottom: '0.5rem' }}>{data.fullName}</h1>
+          <h1 style={{ fontSize: '2.5rem', fontWeight: 300, marginBottom: '0.5rem' }}>
+            <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.fullName}</ProtectText>
+          </h1>
           <div style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.email} • {data.phone} • {data.address}</div>
         </div>
         {data.photo && (
@@ -2617,7 +3390,11 @@ function MinimalCV({ data }) {
         )}
       </div>
 
-      <MinimalSection title="Profile"><p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>{data.summary}</p></MinimalSection>
+      <MinimalSection title="Profile">
+        <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.summary}</ProtectText>
+        </p>
+      </MinimalSection>
 
       <MinimalSection title="Experience">
         {data.experience?.map((exp, i) => (
@@ -2715,6 +3492,7 @@ function getInitialData(id) {
   const baseData = (typeId) => {
     if (typeId === 'cv') return {
       photo: null, photoZoom: 1, photoX: 50, photoY: 50,
+      accentColor: '#6366f1', textColor: '#111827',
       fullName: profile.fullName || '', address: profile.address || '', phone: profile.phone || '', email: profile.email || '',
       dobGender: '', nationality: '', summary: '',
       experience: [{ id: Date.now(), title: '', company: '', dates: '', tasks: '', achievement: '' }],
@@ -2724,9 +3502,12 @@ function getInitialData(id) {
       references: [{ id: Date.now() + 3, name: '', org: '', phone: '' }]
     };
     if (typeId === 'letter') return {
-      senderName: profile.fullName || '',
-      recipient: '', company: '',
-      body: 'Dear Manager,\n\nI am writing to express my interest in...'
+      accentColor: '#6366f1', textColor: '#111827',
+      senderName: profile.fullName || '', senderEmail: profile.email || '', senderPhone: profile.phone || '', senderAddress: profile.address || '',
+      date: new Date().toLocaleDateString('en-GB'),
+      recipient: '', recipientTitle: '', company: '', companyAddress: '',
+      subject: 'Application for the Position of...',
+      body: 'Dear Hiring Manager,\n\nI am writing to express my enthusiastic interest in the [Job Title] position at [Company Name]...'
     };
     if (typeId === 'recommendation') return {
       recommenderName: profile.fullName || '', recommenderTitle: '', recommenderOrg: profile.companyName || '',
@@ -2767,9 +3548,10 @@ function getInitialData(id) {
     if (typeId === 'invoice') return {
       invoiceNumber: `INV-${Date.now().toString().slice(-6)}`, date: new Date().toLocaleDateString('en-GB'),
       businessName: profile.companyName || '', businessAddress: profile.companyAddress || '', businessPhone: profile.companyPhone || '',
-      businessEmail: profile.email || '', businessTin: '',
+      businessEmail: profile.email || '', businessTin: '', businessLogo: null,
+      showWatermark: false, watermarkType: 'text',
       customerName: '', customerAddress: '', customerPhone: '',
-      items: [{ id: Date.now(), desc: '', qty: 1, price: 0 }], taxRate: 0, notes: 'Thank you for your business!'
+      items: [{ id: Date.now(), desc: '', qty: '', price: '' }], taxRate: 0, notes: 'Thank you for your business!'
     };
     if (typeId === 'leave_permission') return {
       companyName: profile.companyName || '', companyAddress: profile.companyAddress || '', companyPhone: profile.companyPhone || '',
@@ -2784,6 +3566,10 @@ function getInitialData(id) {
       jobTitle: '', department: '', commencementDate: '', probationPeriod: '3 Months',
       salaryAmount: '', workingHours: '8:00 AM - 5:00 PM', annualLeave: '15 Days', noticePeriod: '1 Month',
       contractDate: new Date().toLocaleDateString('en-GB')
+    };
+    if (typeId === 'qr_code') return {
+      label: 'My Custom QR',
+      content: 'https://sparkdocs.com'
     };
     return { data: '' };
   };

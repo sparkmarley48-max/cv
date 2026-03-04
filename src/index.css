@@ -672,8 +672,83 @@ h3,
   color: #111827;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
   position: relative;
-  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   transform-origin: top center;
+}
+
+/* Security Features for Unpaid Documents */
+.document-protected {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Tiled Watermark Pattern - Much harder to remove in DevTools than a single element */
+.document-protected {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='150' height='100'><text x='0' y='50' fill='rgba(0,0,0,0.06)' font-family='Arial' font-size='12' transform='rotate(-20, 75, 50)'>SPARK DOCS - PREVIEW ONLY</text></svg>") !important;
+  background-repeat: repeat !important;
+}
+
+.document-protected::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0);
+  /* Invisible but blocks interaction */
+  z-index: 1000;
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+
+/* Large Main Watermark */
+.document-protected::after {
+  content: "PLEASE PAY TO UNLOCK";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  font-size: 5rem;
+  font-weight: 950;
+  color: rgba(239, 68, 68, 0.07);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1001;
+  text-align: center;
+  border: 10px solid rgba(239, 68, 68, 0.05);
+  padding: 20px;
+}
+
+.document-protected .content-blur {
+  filter: blur(0.7px);
+  opacity: 0.9;
+  pointer-events: none;
+  /* User cannot even hover items */
+}
+
+@media print {
+  .document-protected {
+    display: none !important;
+  }
+
+  body::before {
+    content: "UNAUTHORIZED PRINTING DETECTED. PLEASE PAY TO DOWNLOAD THE OFFICIAL PDF.";
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 24pt;
+    font-weight: bold;
+    color: #ef4444;
+    text-align: center;
+    width: 80%;
+    z-index: 9999;
+  }
 }
 
 @media (max-width: 768px) {
@@ -756,4 +831,168 @@ h3,
     width: 100%;
     transform: none !important;
   }
+}
+
+@keyframes pulse-red {
+  0% {
+    background-color: rgba(239, 68, 68, 0.1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+
+  50% {
+    background-color: rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+  }
+
+  100% {
+    background-color: rgba(239, 68, 68, 0.1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+.placeholder-beep {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: #ef4444;
+  font-weight: 800;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  animation: pulse-red 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+  cursor: help;
+  position: relative;
+}
+
+.placeholder-beep::after {
+  content: 'FILL ME';
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  background: #ef4444;
+  color: white;
+  padding: 1px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.placeholder-beep:hover::after {
+  opacity: 1;
+}
+
+/* --- AI Center Overlay --- */
+.ai-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 1.5rem;
+}
+
+.ai-overlay-content {
+  background: var(--gradient-1);
+  padding: 2.5rem 2rem;
+  border-radius: 2rem;
+  text-align: center;
+  color: white;
+  max-width: 400px;
+  width: 100%;
+  box-shadow: 0 25px 50px -12px rgba(99, 102, 241, 0.5);
+  border: 4px solid rgba(255, 255, 255, 0.1);
+  position: relative;
+}
+
+.ai-overlay-icon {
+  width: 64px;
+  height: 64px;
+  background: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.5rem;
+  color: var(--primary);
+  box-shadow: 0 0 30px rgba(255, 255, 255, 0.4);
+  animation: pulse-white 2s infinite;
+}
+
+@keyframes pulse-white {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+  }
+
+  70% {
+    box-shadow: 0 0 0 20px rgba(255, 255, 255, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+}
+
+/* --- Smart Placeholder Warning --- */
+.placeholder-warning .input {
+  border-color: #ef4444 !important;
+  background-color: rgba(239, 68, 68, 0.05) !important;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2) !important;
+  animation: input-pulse 2s infinite !important;
+}
+
+@keyframes input-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.1);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2);
+  }
+}
+
+/* --- Premium AI Multi-Step Notice --- */
+.ai-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.ai-overlay-content {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 2.5rem;
+  border-radius: 2rem;
+  max-width: 450px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.ai-overlay-icon {
+  width: 64px;
+  height: 64px;
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+  border-radius: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.5rem;
+  color: white;
+  box-shadow: 0 10px 20px rgba(99, 102, 241, 0.3);
 }
