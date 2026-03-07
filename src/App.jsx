@@ -28,7 +28,17 @@ import {
   Clock,
   Sparkles,
   GripVertical,
-  CheckSquare
+  CheckSquare,
+  TrendingUp,
+  PieChart,
+  Activity,
+  List,
+  Target,
+  Layers,
+  Zap,
+  CheckCircle,
+  Command,
+  Shapes
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { jsPDF } from 'jspdf';
@@ -37,10 +47,11 @@ import PaystackPop from '@paystack/inline-js';
 import { supabase, PAYSTACK_PUBLIC_KEY } from './lib/supabase';
 import AdminDashboard from './components/AdminDashboard';
 import AdminLogin from './components/AdminLogin';
-import { generateCVContent } from './lib/ai';
+import { generateCVContent, generateStructuredDoc } from './lib/ai';
 
 const SECTIONS = [
   { id: 'cv', title: 'Professional CV', icon: Briefcase, color: '#6366f1', desc: 'Comprehensive professional resume' },
+  { id: 'smart_doc', title: 'AI Smart-Document Engine', icon: Sparkles, color: '#f59e0b', desc: 'Any document from scratch with AI structural mapping' },
   { id: 'letter', title: 'Cover Letter', icon: FileText, color: '#ec4899', desc: 'Persuasive application' },
   { id: 'recommendation', title: 'Recommendation Letter', icon: Award, color: '#8b5cf6', desc: 'Professional endorsement letter' },
   { id: 'job_offer', title: 'Job Offer Letter', icon: Check, color: '#10b981', desc: 'Official employment offer' },
@@ -100,13 +111,15 @@ function MainContent() {
   const [showPayment, setShowPayment] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [currentDocId, setCurrentDocId] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('is_admin') === 'true');
+  const [isPaid, setIsPaid] = useState(false);
   const [docPrice, setDocPrice] = useState(() => Number(localStorage.getItem('spark_docs_price')) || 20);
   const [currentPrice, setCurrentPrice] = useState(null);
   const [aiTone, setAiTone] = useState('professional');
-  const [darkMode, setDarkMode] = useState(localStorage.getItem('dark_mode') === 'true');
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('dark_mode') === 'true');
   const [showProfile, setShowProfile] = useState(false);
-  const [isPaid, setIsPaid] = useState(false);
+  const [showSmartLauncher, setShowSmartLauncher] = useState(false);
+
   const [typePrices, setTypePrices] = useState(() => {
     const saved = localStorage.getItem('spark_type_prices');
     return saved ? JSON.parse(saved) : {
@@ -117,7 +130,8 @@ function MainContent() {
       invoice: 10,
       recommendation: 20,
       leave_permission: 15,
-      employment_contract: 40
+      employment_contract: 40,
+      smart_doc: 30
     };
   });
 
@@ -130,31 +144,72 @@ function MainContent() {
     localStorage.setItem('dark_mode', darkMode);
   }, [darkMode]);
 
+  const [isApproved, setIsApproved] = useState(false);
+  const SUPER_ADMIN = 'couragelanza@gmail.com';
+
   useEffect(() => {
-    // Session state
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
-        setIsAdmin(true);
-        localStorage.setItem('is_admin', 'true');
+    const handleAuth = async (session) => {
+      if (session?.user) {
+        const userEmail = session.user.email;
+        localStorage.setItem('spark_docs_user_email', userEmail);
+        if (userEmail === SUPER_ADMIN) {
+          setIsAdmin(true);
+          setIsApproved(true);
+          localStorage.setItem('is_admin', 'true');
+          return;
+        }
+
+        // Check if explicitly approved in an 'admins' table
+        try {
+          const { data, error } = await supabase
+            .from('admins')
+            .select('*')
+            .eq('email', userEmail)
+            .eq('approved', true)
+            .single();
+
+          if (data) {
+            setIsAdmin(true);
+            setIsApproved(true);
+            localStorage.setItem('is_admin', 'true');
+          } else {
+            // User is authenticated but NOT an approved admin
+            setIsAdmin(false);
+            setIsApproved(false);
+            localStorage.removeItem('is_admin');
+          }
+        } catch (e) {
+          setIsAdmin(false);
+          setIsApproved(false);
+        }
       } else {
         setIsAdmin(false);
+        setIsApproved(false);
         localStorage.removeItem('is_admin');
+      }
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth event:', event);
+      if (event === 'SIGNED_OUT') {
+        setIsAdmin(false);
+        setIsApproved(false);
+        localStorage.removeItem('is_admin');
+      } else {
+        handleAuth(session);
       }
     });
 
-    // Initial check
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setIsAdmin(true);
-      }
-    };
-    checkSession();
+    supabase.auth.getSession().then(({ data: { session } }) => handleAuth(session));
 
     return () => subscription.unsubscribe();
   }, []);
 
   const startDoc = (type) => {
+    if (type.id === 'smart_doc') {
+      setShowSmartLauncher(true);
+      return;
+    }
     setSelectedType(type);
     setData(getInitialData(type.id));
     setCurrentDocId(null);
@@ -1027,6 +1082,68 @@ function MainContent() {
       doc.text('The Employee', 120, y + 5);
       doc.text(data.employerName, margin, y + 10);
       doc.text(data.employeeName, 120, y + 10);
+    } else if (selectedType.id === 'smart_doc') {
+      const accent = data.accentColor || '#f59e0b';
+      addText(data.title || 'Untitled AI Smart-Doc', 22, 'bold', '#0f172a', 10);
+      doc.setDrawColor(accent);
+      doc.setLineWidth(1.5);
+      doc.line(margin, y, margin + 20, y);
+      y += 15;
+
+      (data.sections || []).forEach((section, idx) => {
+        addText(section.title, 12, 'bold', accent, 4);
+        addText(section.content, 10, 'normal', '#334155', 8);
+
+        if (section.visuals) {
+          const { type, data: vData, unit } = section.visuals;
+          if (type === 'bar') {
+            const maxVal = Math.max(...vData.map(d => d.value), 1);
+            vData.forEach(item => {
+              doc.setFontSize(8);
+              doc.setTextColor('#64748b');
+              doc.text(item.label, margin, y);
+              doc.text(`${item.value}${unit}`, 190, y, { align: 'right' });
+              y += 3;
+              doc.setFillColor('#f1f5f9');
+              doc.rect(margin, y, 170, 2, 'F');
+              doc.setFillColor(accent);
+              doc.rect(margin, y, (item.value / maxVal) * 170, 2, 'F');
+              y += 8;
+            });
+          } else if (type === 'metric') {
+            const size = 170 / vData.length;
+            vData.forEach((item, i) => {
+              const xOff = margin + (i * size);
+              doc.setDrawColor(accent);
+              doc.line(xOff, y, xOff, y + 10);
+              doc.setFontSize(7);
+              doc.setTextColor('#94a3b8');
+              doc.text(item.label.toUpperCase(), xOff + 2, y + 3);
+              doc.setFontSize(12);
+              doc.setTextColor('#1e293b');
+              doc.text(`${item.value}${unit}`, xOff + 2, y + 9);
+            });
+            y += 15;
+          } else if (type === 'progress') {
+            vData.forEach((item, i) => {
+              const xOff = margin + (i * 45);
+              if (xOff > 160) return;
+              doc.setDrawColor('#f1f5f9');
+              doc.setLineWidth(2);
+              doc.circle(xOff + 15, y + 15, 12, 'S');
+              doc.setDrawColor(accent);
+              // Simple arc approximation for progress in PDF
+              doc.circle(xOff + 15, y + 15, 12, 'S');
+              doc.setFontSize(10);
+              doc.text(`${item.value}%`, xOff + 15, y + 17, { align: 'center' });
+              doc.setFontSize(7);
+              doc.text(item.label, xOff + 15, y + 32, { align: 'center', maxWidth: 30 });
+            });
+            y += 40;
+          }
+        }
+        y += 10;
+      });
     } else {
       addText(selectedType.title, 20, 'bold', '#000000', 15);
       Object.entries(data).forEach(([key, val]) => {
@@ -1092,7 +1209,11 @@ function MainContent() {
             onLogout={async () => { await supabase.auth.signOut(); setView('landing'); }}
           />
         ) : view === 'admin_login' ? (
-          <AdminLogin key="login" onLogin={() => setView('admin')} onBack={() => setView('landing')} />
+          <AdminLogin key="login" onLogin={(user) => {
+            setIsAdmin(true);
+            localStorage.setItem('is_admin', 'true');
+            setView('admin');
+          }} onBack={() => setView('landing')} />
         ) : (
           <EditorPage
             key="editor"
@@ -1116,6 +1237,25 @@ function MainContent() {
       {showProfile && (
         <div className="overlay fade-in">
           <ProfileModal onClose={() => setShowProfile(false)} />
+        </div>
+      )}
+
+      {showSmartLauncher && (
+        <div className="overlay fade-in">
+          <SmartDocLauncher
+            onClose={() => setShowSmartLauncher(false)}
+            onLaunch={(generated) => {
+              setShowSmartLauncher(false);
+              setSelectedType(SECTIONS.find(s => s.id === 'smart_doc'));
+              setData({
+                ...getInitialData('smart_doc'),
+                title: generated.title,
+                sections: generated.sections,
+                accentColor: generated.themeColor || '#f59e0b'
+              });
+              setView('editor');
+            }}
+          />
         </div>
       )}
 
@@ -1182,16 +1322,16 @@ function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           className="brand"
-          style={{ fontSize: '1.8rem', fontWeight: 800 }}
+          style={{ fontWeight: 800 }}
         >
           SPARK<span style={{ color: 'var(--primary)' }}>DOCS</span>
         </motion.div>
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex items-center gap-1 md:gap-2 ml-auto">
           <motion.button
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             onClick={() => setDarkMode(!darkMode)}
-            className="btn btn-ghost !p-2 rounded-full"
+            className="btn btn-ghost !p-1-5 md:!p-2 rounded-full"
             title="Toggle Dark Mode"
           >
             {darkMode ? <Sparkles size={18} /> : <FileText size={18} />}
@@ -1200,7 +1340,7 @@ function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             onClick={onProfile}
-            className="btn btn-ghost !p-2 rounded-full"
+            className="btn btn-ghost !p-1-5 md:!p-2 rounded-full"
             title="My Profile"
           >
             <User size={20} />
@@ -1209,7 +1349,7 @@ function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             onClick={onAdmin}
-            className="btn btn-ghost !p-2 rounded-full"
+            className="btn btn-ghost !p-1-5 md:!p-2 rounded-full"
             title="Admin Access"
           >
             <Shield size={20} />
@@ -1357,17 +1497,20 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
   // Anti-Debug: Triggers a breakpoint if console is open
   useEffect(() => {
     if (isPaid || isAdmin) return;
-    const detector = setInterval(() => {
-      const start = new Date();
-      debugger; // This will pause the JS if DevTools is open
-      const end = new Date();
-      if (end - start > 100) {
-        // DevTools likely open
-        console.clear();
-        console.log("%cSECURITY ALERT: Unauthorized access to source detected.", "color: red; font-size: 20px; font-weight: bold;");
-      }
-    }, 1000);
-    return () => clearInterval(detector);
+    // Delay security features slightly to allow initial session check
+    const timer = setTimeout(() => {
+      const detector = setInterval(() => {
+        const start = new Date();
+        debugger;
+        const end = new Date();
+        if (end - start > 100) {
+          console.clear();
+          console.log("%cSECURITY ALERT", "color: red; font-size: 20px; font-weight: bold;");
+        }
+      }, 1000);
+      return () => clearInterval(detector);
+    }, 2000);
+    return () => clearTimeout(timer);
   }, [isPaid, isAdmin]);
 
   const handleChange = (field, value) => setData(prev => ({ ...prev, [field]: value }));
@@ -1404,7 +1547,7 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 md:gap-2">
             <div className="hidden lg:flex items-center gap-1 bg-black/10 p-1 rounded-xl mr-2">
               {['professional', 'executive', 'simple'].map(t => (
                 <button
@@ -1420,14 +1563,14 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
             <motion.button
               whileTap={{ scale: 0.9 }}
               onClick={() => setShowStyle(!showStyle)}
-              className={`btn btn-ghost !p-2 ${showStyle ? 'text-primary' : ''}`}
+              className={`btn btn-ghost !p-1-5 md:!p-2 ${showStyle ? 'text-primary' : ''}`}
             >
               <Heart size={20} className={showStyle ? 'fill-current' : ''} />
             </motion.button>
 
             <motion.button
               whileTap={{ scale: 0.95 }}
-              className="btn btn-primary !py-2 !px-4 md:!px-6 shadow-lg"
+              className="btn btn-primary !py-2 !px-3 md:!px-6 shadow-lg"
               onClick={onDownload}
               disabled={isSaving}
             >
@@ -1532,6 +1675,8 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
               <JobOfferEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
             ) : type?.id === 'qr_code' ? (
               <QRCodeEditor data={data || {}} onChange={handleChange} />
+            ) : type?.id === 'smart_doc' ? (
+              <SmartEditor data={data || {}} onChange={handleChange} onListUpdate={handleListUpdate} onAddList={addListItem} onRemoveList={removeListItem} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
             ) : type?.id === 'rent_receipt' ? (
               <RentReceiptEditor data={data || {}} onChange={handleChange} />
             ) : (
@@ -2431,6 +2576,577 @@ function GenericEditor({ data, onChange }) {
   );
 }
 
+function SmartDocLauncher({ onLaunch, onClose }) {
+  const [intent, setIntent] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [audience, setAudience] = useState('Professional');
+  const [tone, setTone] = useState('Professional');
+  const [loading, setLoading] = useState(false);
+
+  const handleCreate = async () => {
+    setLoading(true);
+    try {
+      const result = await generateStructuredDoc(intent, prompt, audience, tone);
+      onLaunch(result);
+    } catch (e) {
+      alert("Failed to architect document structure. Check your API key or connection.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal !max-w-2xl">
+      <div className="flex justify-between items-center mb-8">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary shadow-inner">
+            <Sparkles size={24} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight">AI Smart Architect</h2>
+            <p className="text-[10px] text-text-muted uppercase font-black tracking-widest">Anything-to-Format Workspace</p>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-text-muted hover:text-white transition-colors"><X size={24} /></button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+        <div className="space-y-6">
+          <div className="form-group">
+            <label className="label">What are you creating?</label>
+            <input
+              className="input w-full"
+              placeholder="e.g. Project Proposal for XYZ client"
+              value={intent}
+              onChange={e => setIntent(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="form-group">
+              <label className="label">Target Audience</label>
+              <input
+                className="input w-full"
+                placeholder="e.g. Stakeholders"
+                value={audience}
+                onChange={e => setAudience(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
+              <label className="label">Tone</label>
+              <select
+                className="input w-full bg-bg"
+                value={tone}
+                onChange={e => setTone(e.target.value)}
+                style={{ color: 'var(--text)' }}
+              >
+                <option value="Professional" style={{ color: '#000' }}>Professional</option>
+                <option value="Executive" style={{ color: '#000' }}>Executive</option>
+                <option value="Urgent" style={{ color: '#000' }}>Urgent / Formal</option>
+                <option value="Creative" style={{ color: '#000' }}>Creative</option>
+                <option value="Friendly" style={{ color: '#000' }}>Friendly</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div className="form-group h-full flex flex-col">
+          <label className="label">Raw Notes / Background Info (AI Instruction)</label>
+          <textarea
+            className="input w-full flex-1 min-h-[160px]"
+            placeholder="Paste your raw notes or specific requirements here..."
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4 bg-primary/5 p-6 rounded-2xl border border-primary/10 mb-8">
+        <Shapes className="text-primary hidden sm:block" size={40} />
+        <div>
+          <h4 className="text-sm font-bold">Structural Metadata Analysis</h4>
+          <p className="text-xs text-text-muted">AI will automatically determine document sections, logical hierarchy, and best industry tone for your intent.</p>
+        </div>
+      </div>
+
+      <div className="flex gap-4">
+        <button onClick={onClose} className="btn btn-ghost flex-1">Maybe Later</button>
+        <button
+          onClick={handleCreate}
+          disabled={loading || !intent}
+          className="btn btn-primary flex-[2] shadow-xl !py-4"
+        >
+          {loading ? <Loader2 size={24} className="animate-spin" /> : <Command size={20} />}
+          {loading ? "Architecting Document..." : "Generate AI Smart-Doc"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SmartEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, aiTone, onAiUse }) {
+  if (!data) return null;
+  const [aiLoading, setAiLoading] = useState({});
+
+  return (
+    <div className="space-y-12 pb-20 px-safe">
+      <EditorSection icon={Shapes} title="Document Overview" id="overview">
+        <Input label="Document Title" value={data.title} onChange={v => onChange('title', v)} />
+      </EditorSection>
+
+      <Reorder.Group axis="y" values={data.sections || []} onReorder={v => onChange('sections', v)} className="space-y-6">
+        {(data.sections || []).map((section, i) => (
+          <Reorder.Item key={section.id} value={section} className="card !p-6 md:!p-10 border-l-4 border-l-primary/40 relative group">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <GripVertical size={16} className="text-text-muted cursor-grab active:cursor-grabbing" />
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Section {i + 1}</span>
+              </div>
+              <button onClick={() => onRemoveList('sections', i)} className="text-text-muted hover:text-red-500 transition-colors">
+                <Trash2 size={20} />
+              </button>
+            </div>
+            <div className="space-y-6">
+              <Input label="Section Title" value={section.title} onChange={v => onListUpdate('sections', i, 'title', v)} />
+              <TextArea
+                label="Content Body"
+                value={section.content}
+                onChange={v => onListUpdate('sections', i, 'content', v)}
+                isAiLoading={aiLoading[`smart-${i}`]}
+                onAiClick={async () => {
+                  setAiLoading(prev => ({ ...prev, [`smart-${i}`]: true }));
+                  try {
+                    const res = await generateCVContent(`Improve or expand this section: "${section.title}". Context: ${data.title}. Current text: ${section.content}`, `You are a professional document writer. Enhance the clarity and impact of this section.`);
+                    onListUpdate('sections', i, 'content', res);
+                    if (onAiUse) onAiUse();
+                  } catch (e) {
+                    alert("AI generation failed.");
+                  } finally {
+                    setAiLoading(prev => ({ ...prev, [`smart-${i}`]: false }));
+                  }
+                }}
+              />
+
+              <div className="pt-4 border-t border-slate-100 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-[10px] font-black text-primary/60 tracking-tighter uppercase">
+                    <Shapes size={12} className="animate-pulse" /> AI Structural Visual
+                  </div>
+                  <button
+                    onClick={() => {
+                      const current = section.visuals;
+                      onListUpdate('sections', i, 'visuals', current ? null : { type: 'bar', data: [{ label: 'Metric A', value: 80 }], unit: '%' });
+                    }}
+                    className={`text-[10px] font-bold uppercase transition-colors ${section.visuals ? 'text-red-400 hover:text-red-500' : 'text-primary hover:text-secondary'}`}
+                  >
+                    {section.visuals ? "Remove Visual" : "Add Visual Component"}
+                  </button>
+                </div>
+
+                {section.visuals && (
+                  <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 animate-in fade-in slide-in-from-top-2">
+                    <p className="text-[10px] text-slate-400 mb-2 font-bold uppercase tracking-widest">Metadata Config</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <select
+                        className="input !py-1.5 text-xs bg-white"
+                        value={section.visuals.type}
+                        onChange={e => onListUpdate('sections', i, 'visuals', { ...section.visuals, type: e.target.value })}
+                      >
+                        <option value="bar">Horizontal Bars</option>
+                        <option value="progress">Circular Progress</option>
+                        <option value="metric">Metric Highlights</option>
+                        <option value="line">Trend Line Chart</option>
+                        <option value="area">Area Chart</option>
+                        <option value="donut">Donut Distribution</option>
+                        <option value="step">Process Steps</option>
+                        <option value="comparison">Side-by-Side</option>
+                        <option value="swot">SWOT Analysis</option>
+                        <option value="infographic_stat">Vibrant Infographic</option>
+                      </select>
+                      <input
+                        className="input !py-1.5 text-xs bg-white"
+                        placeholder="Unit (%, GHS, etc)"
+                        value={section.visuals.unit || ''}
+                        onChange={e => onListUpdate('sections', i, 'visuals', { ...section.visuals, unit: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Reorder.Item>
+        ))}
+      </Reorder.Group>
+
+      <button
+        onClick={() => onAddList('sections', { id: Date.now(), title: 'New Section', content: '' })}
+        className="btn btn-ghost w-full border-dashed !py-5 hover:!bg-primary/5 transition-colors"
+      >
+        <Plus size={24} /> Add Manual Section
+      </button>
+    </div>
+  );
+}
+
+function ChartVisual({ config, themeColor }) {
+  if (!config || !config.data) return null;
+  const { type, data, unit } = config;
+  const color = themeColor || '#f59e0b';
+
+  if (type === 'bar') {
+    const maxVal = Math.max(...data.map(d => d.value), 1);
+    return (
+      <div className="my-10 p-8 bg-white dark:bg-slate-900/50 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none">
+        <div className="flex flex-col gap-6">
+          {data.map((item, i) => (
+            <div key={i} className="space-y-2">
+              <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full" style={{ background: color }}></div>{item.label}</span>
+                <span className="text-slate-800 dark:text-slate-200 font-black">{item.value}{unit}</span>
+              </div>
+              <div className="h-3 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden p-0.5">
+                <motion.div
+                  initial={{ width: 0 }}
+                  whileInView={{ width: `${(item.value / maxVal) * 100}%` }}
+                  transition={{ duration: 1, ease: 'easeOut' }}
+                  className="h-full rounded-full shadow-lg"
+                  style={{ background: `linear-gradient(90deg, ${color}, ${color}dd)` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'progress') {
+    return (
+      <div className="my-10 flex flex-wrap gap-12 justify-center">
+        {data.map((item, i) => (
+          <div key={i} className="text-center group">
+            <div className="relative w-40 h-40 flex items-center justify-center p-4">
+              <svg className="w-full h-full transform -rotate-90 filter drop-shadow-md">
+                <circle cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-slate-100 dark:text-slate-800" />
+                <motion.circle
+                  cx="80" cy="80" r="70" stroke={color} strokeWidth="12" fill="transparent"
+                  strokeDasharray="440"
+                  initial={{ strokeDashoffset: 440 }}
+                  whileInView={{ strokeDashoffset: 440 - (440 * item.value) / 100 }}
+                  transition={{ duration: 1.5, ease: 'easeInOut' }}
+                  strokeLinecap="round"
+                />
+              </svg>
+              <div className="absolute flex flex-col items-center">
+                <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tighter">{item.value}{unit || '%'}</span>
+              </div>
+            </div>
+            <div className="mt-4 text-[10px] font-black text-slate-500 uppercase tracking-widest leading-tight max-w-[120px] mx-auto opacity-70 group-hover:opacity-100 transition-opacity">{item.label}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (type === 'metric') {
+    return (
+      <div className="my-10 grid grid-cols-2 md:grid-cols-4 gap-4">
+        {data.map((item, i) => (
+          <motion.div
+            key={i}
+            whileHover={{ y: -5 }}
+            className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border-b-4 shadow-sm"
+            style={{ borderBottomColor: color }}
+          >
+            <div className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">{item.label}</div>
+            <div className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter">{item.value}{unit}</div>
+          </motion.div>
+        ))}
+      </div>
+    );
+  }
+
+  if (type === 'line' || type === 'area') {
+    const points = data.length > 1 ? data : [...data, { label: 'Goal', value: data[0].value * 1.2 }];
+    const max = Math.max(...points.map(p => p.value), 1);
+    const height = 100;
+    const width = 300;
+    const pathData = points.map((p, i) => `${(i / (points.length - 1)) * width},${height - (p.value / max) * height}`).join(' L ');
+    const areaPath = `M 0,${height} L ${pathData} L ${width},${height} Z`;
+
+    return (
+      <div className="my-10 p-8 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-xl">
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-2">
+            <TrendingUp size={16} className="text-slate-400" />
+            <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Trend Analysis / Project Growth</span>
+          </div>
+        </div>
+        <div className="relative w-full h-40">
+          <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
+            {type === 'area' && (
+              <motion.path
+                d={areaPath}
+                initial={{ opacity: 0 }}
+                whileInView={{ opacity: 0.15 }}
+                fill={color}
+              />
+            )}
+            <motion.path
+              d={`M ${pathData}`}
+              fill="none"
+              stroke={color}
+              strokeWidth="4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              initial={{ pathLength: 0 }}
+              whileInView={{ pathLength: 1 }}
+              transition={{ duration: 2 }}
+            />
+            {points.map((p, i) => (
+              <motion.circle
+                key={i}
+                cx={(i / (points.length - 1)) * width}
+                cy={height - (p.value / max) * height}
+                r="4"
+                fill="white"
+                stroke={color}
+                strokeWidth="2"
+                initial={{ scale: 0 }}
+                whileInView={{ scale: 1 }}
+                transition={{ delay: 0.5 + i * 0.1 }}
+              />
+            ))}
+          </svg>
+        </div>
+        <div className="flex justify-between mt-4 border-t border-slate-100 pt-4">
+          {points.map((p, i) => (
+            <div key={i} className="text-center">
+              <div className="text-[10px] font-black text-slate-800">{p.value}{unit}</div>
+              <div className="text-[8px] font-bold text-slate-400 uppercase">{p.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'step') {
+    return (
+      <div className="my-12 px-4">
+        <div className="flex flex-col md:flex-row gap-4 items-center justify-between relative">
+          {data.map((item, i) => (
+            <React.Fragment key={i}>
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                whileInView={{ scale: 1, opacity: 1 }}
+                transition={{ delay: i * 0.2 }}
+                className="flex-1 w-full text-center relative z-10"
+              >
+                <div
+                  className="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-white shadow-xl mb-4 group hover:rotate-6 transition-transform"
+                  style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}
+                >
+                  <span className="text-xl font-black">{i + 1}</span>
+                </div>
+                <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-1">{item.label}</h4>
+                <p className="text-[10px] text-slate-500 font-medium leading-tight max-w-[140px] mx-auto italic">{item.value}</p>
+              </motion.div>
+              {i < data.length - 1 && (
+                <div className="hidden md:block flex-1 h-[2px] bg-slate-100 dark:bg-slate-800 relative top-[-30px]">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    whileInView={{ width: '100%' }}
+                    transition={{ delay: i * 0.2 + 0.1 }}
+                    className="h-full bg-primary/20"
+                  />
+                  <ArrowRight className="absolute right-0 top-1/2 -mt-2.5 text-slate-200" size={20} />
+                </div>
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'comparison') {
+    return (
+      <div className="my-10 space-y-8">
+        {data.map((item, i) => {
+          const parts = String(item.value).split('/');
+          const val1 = parseInt(parts[0]) || 50;
+          const val2 = parseInt(parts[1]) || 50;
+          const total = val1 + val2;
+          return (
+            <div key={i} className="space-y-3">
+              <div className="flex justify-between text-[11px] font-black uppercase tracking-widest text-slate-500">
+                <span>{item.label} Side A</span>
+                <span>Side B Comparison</span>
+              </div>
+              <div className="h-10 w-full flex rounded-2xl overflow-hidden shadow-inner bg-slate-100 p-1">
+                <motion.div
+                  initial={{ width: 0 }}
+                  whileInView={{ width: `${(val1 / total) * 100}%` }}
+                  className="h-full flex items-center justify-center text-[10px] font-black text-white rounded-l-xl"
+                  style={{ background: color }}
+                >
+                  {val1}{unit}
+                </motion.div>
+                <motion.div
+                  initial={{ width: 0 }}
+                  whileInView={{ width: `${(val2 / total) * 100}%` }}
+                  className="h-full flex items-center justify-center text-[10px] font-black text-slate-800 bg-white shadow-sm rounded-r-xl"
+                >
+                  {val2}{unit}
+                </motion.div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (type === 'donut') {
+    const total = data.reduce((sum, d) => sum + d.value, 0);
+    let cumulativeOffset = 0;
+    return (
+      <div className="my-10 flex flex-col md:flex-row items-center gap-12 bg-white p-8 rounded-3xl border border-slate-100">
+        <div className="relative w-48 h-48">
+          <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
+            {data.map((item, i) => {
+              const dashArray = (item.value / total) * 314;
+              const offset = 314 - cumulativeOffset;
+              cumulativeOffset += dashArray;
+              return (
+                <motion.circle
+                  key={i}
+                  cx="50" cy="50" r="40"
+                  fill="none"
+                  stroke={i === 0 ? color : i === 1 ? '#6366f1' : i === 2 ? '#ec4899' : '#10b981'}
+                  strokeWidth="15"
+                  strokeDasharray={`${dashArray} 314`}
+                  strokeDashoffset={- (314 - offset)}
+                  initial={{ opacity: 0, strokeWidth: 0 }}
+                  whileInView={{ opacity: 1, strokeWidth: 15 }}
+                  transition={{ delay: i * 0.1 }}
+                />
+              );
+            })}
+            <circle cx="50" cy="50" r="28" fill="white" />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <PieChart size={32} className="text-slate-200" />
+          </div>
+        </div>
+        <div className="flex-1 space-y-4">
+          {data.map((item, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-4 h-4 rounded-md" style={{ background: i === 0 ? color : i === 1 ? '#6366f1' : i === 2 ? '#ec4899' : '#10b981' }} />
+              <div className="flex-1 flex justify-between">
+                <span className="text-xs font-bold text-slate-600 uppercase">{item.label}</span>
+                <span className="text-xs font-black">{Math.round((item.value / total) * 100)}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'swot') {
+    const quadrants = [
+      { id: 'S', title: 'Strengths', icon: Zap, bg: 'bg-emerald-50', text: 'text-emerald-600' },
+      { id: 'W', title: 'Weaknesses', icon: Activity, bg: 'bg-rose-50', text: 'text-rose-600' },
+      { id: 'O', title: 'Opportunities', icon: Target, bg: 'bg-amber-50', text: 'text-amber-600' },
+      { id: 'T', title: 'Threats', icon: Shield, bg: 'bg-slate-50', text: 'text-slate-600' }
+    ];
+    return (
+      <div className="my-10 grid grid-cols-2 gap-4">
+        {quadrants.map((q, i) => {
+          const item = data.find(d => d.label.toLowerCase().includes(q.title.toLowerCase()) || d.label === q.id);
+          return (
+            <motion.div
+              key={q.id}
+              initial={{ scale: 0.9, opacity: 0 }}
+              whileInView={{ scale: 1, opacity: 1 }}
+              transition={{ delay: i * 0.1 }}
+              className={`${q.bg} p-6 rounded-3xl border border-white relative overflow-hidden group`}
+            >
+              <q.icon className={`absolute -right-4 -bottom-4 opacity-5 group-hover:scale-150 transition-transform ${q.text}`} size={120} />
+              <div className="flex items-center gap-2 mb-3">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${q.bg.replace('50', '200')} ${q.text}`}>
+                  <q.icon size={16} />
+                </div>
+                <h4 className="text-[11px] font-black uppercase tracking-widest">{q.title}</h4>
+              </div>
+              <p className="text-[10px] text-slate-600 font-medium leading-relaxed italic">{item ? item.value : 'Key strategic factor defined by AI analysis.'}</p>
+            </motion.div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (type === 'infographic_stat') {
+    return (
+      <div className="my-10 grid grid-cols-1 md:grid-cols-2 gap-6">
+        {data.map((item, i) => (
+          <motion.div
+            key={i}
+            whileHover={{ scale: 1.02 }}
+            className="flex items-center gap-6 p-8 bg-gradient-to-br from-white to-slate-50 rounded-[40px] border border-slate-100 shadow-xl"
+          >
+            <div
+              className="w-20 h-20 rounded-[30px] flex items-center justify-center text-white shadow-lg rotate-3 group-hover:rotate-0 transition-transform"
+              style={{ background: color }}
+            >
+              {i === 0 ? <Zap size={32} /> : i === 1 ? <Target size={32} /> : <Award size={32} />}
+            </div>
+            <div>
+              <div className="text-4xl font-black text-slate-800 tracking-tighter mb-1">{item.value}{unit}</div>
+              <div className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{item.label}</div>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function SmartPreview({ data, isPaid, isAdmin }) {
+  if (!data) return null;
+  const accent = data.accentColor || '#f59e0b';
+  return (
+    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
+      <div style={{ textAlign: 'center', marginBottom: '3.5rem', borderBottom: `2px solid ${accent}`, paddingBottom: '2rem' }}>
+        <h1 style={{ fontSize: '2.2rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '-0.03em' }}>{data.title}</h1>
+        <div style={{ width: '60px', height: '4px', background: accent, margin: '1rem auto' }}></div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
+        {(data.sections || []).map((section, idx) => (
+          <section key={idx}>
+            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: accent, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.5rem' }}>
+              {section.title}
+            </h2>
+            <div style={{ fontSize: '1rem', lineHeight: '1.8', color: '#334155', whiteSpace: 'pre-line', marginBottom: '1.5rem' }}>
+              <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{section.content}</ProtectText>
+            </div>
+            <ChartVisual config={section.visuals} themeColor={accent} />
+          </section>
+        ))}
+      </div>
+
+      <div style={{ marginTop: '5rem', borderTop: '1px solid #e2e8f0', paddingTop: '2rem', fontSize: '0.9rem', color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
+        <span>Official Document • AI Structural Mapping</span>
+        <span>Date: {new Date().toLocaleDateString('en-GB')}</span>
+      </div>
+    </div>
+  );
+}
+
 function Input({ label, value, onChange, onAiClick, isAiLoading }) {
   return (
     <div className="form-group w-full group">
@@ -2626,18 +3342,20 @@ function TenancyPreview({ data, template, isPaid, isAdmin }) {
   );
 }
 
-function LetterPreview({ data, template }) {
+function LetterPreview({ data, template, isPaid, isAdmin }) {
   if (!data) return null;
-  if (template === 'modern') return <ModernLetter data={data} />;
-  if (template === 'minimal') return <MinimalLetter data={data} />;
-  return <ClassicLetter data={data} />;
+  if (template === 'modern') return <ModernLetter data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (template === 'minimal') return <MinimalLetter data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  return <ClassicLetter data={data} isPaid={isPaid} isAdmin={isAdmin} />;
 }
 
-function ClassicLetter({ data }) {
+function ClassicLetter({ data, isPaid, isAdmin }) {
   return (
     <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
       <div style={{ textAlign: 'right', marginBottom: '2rem' }}>
-        <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>{data.senderName}</h2>
+        <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.senderName}</ProtectText>
+        </h2>
         <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.senderAddress}</p>
         <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.senderPhone} | {data.senderEmail}</p>
       </div>
@@ -2657,7 +3375,7 @@ function ClassicLetter({ data }) {
         </div>
       )}
       <div style={{ fontSize: '1rem', lineHeight: '1.8', whiteSpace: 'pre-line', color: '#334155' }}>
-        {data.body}
+        <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.body}</ProtectText>
       </div>
       <div style={{ marginTop: '3rem' }}>
         <p>Sincerely,</p>
@@ -2669,11 +3387,13 @@ function ClassicLetter({ data }) {
   );
 }
 
-function ModernLetter({ data }) {
+function ModernLetter({ data, isPaid, isAdmin }) {
   return (
     <div className="document-cv" style={{ fontFamily: 'Outfit, sans-serif', padding: '0 !important', overflow: 'hidden' }}>
       <header style={{ background: '#f8fafc', padding: '2.5rem 2rem', borderBottom: '4px solid #ec4899', marginBottom: '2.5rem' }}>
-        <h1 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#1e293b', marginBottom: '0.5rem' }}>{data.senderName}</h1>
+        <h1 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#1e293b', marginBottom: '0.5rem' }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.senderName}</ProtectText>
+        </h1>
         <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem', color: '#64748b' }}>
           <span>{data.senderEmail}</span><span>•</span><span>{data.senderPhone}</span><span>•</span><span>{data.senderAddress}</span>
         </div>
@@ -2694,7 +3414,7 @@ function ModernLetter({ data }) {
           <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#1e293b', marginBottom: '1.5rem', borderLeft: '4px solid #ec4899', paddingLeft: '1rem' }}>{data.subject}</h2>
         )}
         <div style={{ fontSize: '1rem', lineHeight: '1.8', whiteSpace: 'pre-line', color: '#334155' }}>
-          {data.body}
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.body}</ProtectText>
         </div>
         <div style={{ marginTop: '4rem' }}>
           <p style={{ fontWeight: 600, color: '#ec4899' }}>Best Regards,</p>
@@ -3060,7 +3780,9 @@ function JobOfferPreview({ data, isPaid, isAdmin }) {
         <p style={{ fontSize: '0.9rem' }}><strong>Start Date:</strong> {data.startDate}</p>
         <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}><strong>Monthly Salary:</strong> GHS {data.salary}</p>
       </div>
-      <div style={{ fontSize: '0.95rem', lineHeight: 1.8, whiteSpace: 'pre-line' }}>{data.welcomeMessage}</div>
+      <div style={{ fontSize: '0.95rem', lineHeight: 1.8, whiteSpace: 'pre-line' }}>
+        <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.welcomeMessage}</ProtectText>
+      </div>
       <div style={{ marginTop: '4rem' }}>
         <p style={{ fontSize: '0.95rem' }}>Signed,</p>
         <p style={{ fontWeight: 800, marginTop: '2rem' }}>{data.managerName}</p>
@@ -3120,6 +3842,7 @@ function PreviewContent({ id, data, template, isPaid, isAdmin }) {
   if (id === 'job_offer') return <JobOfferPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
   if (id === 'rent_receipt') return <RentReceiptPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
   if (id === 'qr_code') return <QRCodePreview data={data} />;
+  if (id === 'smart_doc') return <SmartPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
 
   return <div className="p-12 text-center text-text-muted">Preview coming soon for {id}</div>;
 }
@@ -3570,6 +4293,12 @@ function getInitialData(id) {
     if (typeId === 'qr_code') return {
       label: 'My Custom QR',
       content: 'https://sparkdocs.com'
+    };
+    if (typeId === 'smart_doc') return {
+      title: 'Structural Draft',
+      sections: [],
+      accentColor: '#f59e0b',
+      textColor: '#111827'
     };
     return { data: '' };
   };

@@ -24,7 +24,9 @@ export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceCh
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [newPrice, setNewPrice] = useState(currentPrice);
-    const [activeTab, setActiveTab] = useState('documents'); // 'documents' or 'pricing'
+    const [activeTab, setActiveTab] = useState('documents'); // 'documents', 'pricing', 'admins'
+    const [admins, setAdmins] = useState([]);
+    const isSuperAdmin = localStorage.getItem('spark_docs_user_email') === 'couragelanza@gmail.com';
 
     // Pricing categories defaults are now passed via props
 
@@ -35,7 +37,45 @@ export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceCh
 
     useEffect(() => {
         fetchDocs();
+        if (isSuperAdmin) fetchAdmins();
     }, []);
+
+    async function fetchAdmins() {
+        try {
+            const { data, error } = await supabase
+                .from('admins')
+                .select('*')
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            setAdmins(data || []);
+        } catch (err) {
+            console.error('Error fetching admins:', err);
+        }
+    }
+
+    async function toggleAdminApproval(admin) {
+        try {
+            const { error } = await supabase
+                .from('admins')
+                .update({ approved: !admin.approved })
+                .eq('id', admin.id);
+            if (error) throw error;
+            fetchAdmins();
+        } catch (err) {
+            alert('Failed to update admin status. Make sure the "admins" table exists with (id, email, approved).');
+        }
+    }
+
+    async function deleteAdminUser(id) {
+        if (!confirm('Are you sure you want to remove this admin?')) return;
+        try {
+            const { error } = await supabase.from('admins').delete().eq('id', id);
+            if (error) throw error;
+            fetchAdmins();
+        } catch (err) {
+            alert('Delete failed');
+        }
+    }
 
     async function fetchDocs() {
         try {
@@ -150,6 +190,14 @@ export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceCh
                                 >
                                     Price Settings
                                 </button>
+                                {isSuperAdmin && (
+                                    <button
+                                        onClick={() => setActiveTab('admins')}
+                                        className={`text-xs font-black uppercase tracking-widest px-3 py-1 rounded-lg transition-all ${activeTab === 'admins' ? 'bg-primary text-white' : 'text-text-muted hover:bg-black/5'}`}
+                                    >
+                                        Manage Admins
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -234,6 +282,52 @@ export default function AdminDashboard({ onEdit, onBack, currentPrice, onPriceCh
                             </div>
                             <p className="text-[10px] text-text-muted mt-6 italic opacity-50">Note: These are local state defaults for this session only in this demo.</p>
                         </motion.div>
+                    </div>
+                ) : activeTab === 'admins' ? (
+                    <div className="flex flex-col gap-6">
+                        <div className="card !p-8">
+                            <h2 className="text-xl font-black uppercase tracking-widest mb-6 flex items-center gap-2">
+                                <Users className="text-primary" size={24} /> Authorized Personnel
+                            </h2>
+                            <p className="text-sm text-text-muted mb-8 italic">
+                                Only approved admins can access this console and generate documents for free.
+                            </p>
+
+                            <div className="grid gap-4">
+                                {admins.map(admin => (
+                                    <div key={admin.id} className="flex items-center justify-between p-4 bg-black/5 rounded-2xl border border-card-border hover:border-primary/50 transition-all">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                                                {admin.email[0].toUpperCase()}
+                                            </div>
+                                            <div>
+                                                <p className="font-bold">{admin.email}</p>
+                                                <p className="text-[10px] text-text-muted uppercase font-black">{admin.approved ? 'Approved Access' : 'Pending Request'}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => toggleAdminApproval(admin)}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${admin.approved ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' : 'bg-primary text-white shadow-lg'}`}
+                                            >
+                                                {admin.approved ? 'Revoke Access' : 'Approve Admin'}
+                                            </button>
+                                            <button
+                                                onClick={() => deleteAdminUser(admin.id)}
+                                                className="p-2 text-text-muted hover:text-red-500 transition-colors"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                                {admins.length === 0 && (
+                                    <div className="text-center py-12 text-text-muted text-xs font-black uppercase tracking-widest italic opacity-50">
+                                        No secondary admins found.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 ) : (
                     <>

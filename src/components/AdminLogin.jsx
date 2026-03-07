@@ -16,28 +16,40 @@ export default function AdminLogin({ onLogin, onBack }) {
         setError('');
 
         try {
+            console.log('Attempting sign in for:', email);
             if (isSignUp) {
                 const { data, error: signUpError } = await supabase.auth.signUp({
                     email,
                     password,
                 });
                 if (signUpError) throw signUpError;
-                alert('Account created! Please check your email for verification (if enabled) or try logging in.');
+
+                // Add to approvals list as pending
+                await supabase.from('admins').insert([{ email, approved: false }]);
+
+                alert('Account created! Your admin access is currently PENDING APPROVAL. Please check your email for verification and wait for the Super Admin to authorize your access.');
                 setIsSignUp(false);
             } else {
                 const { data, error: signInError } = await supabase.auth.signInWithPassword({
                     email,
                     password,
                 });
-                if (signInError) throw signInError;
+                if (signInError) {
+                    console.error('Sign in error details:', signInError);
+                    throw signInError;
+                }
                 localStorage.setItem('is_admin', 'true');
                 onLogin(data.user);
             }
         } catch (err) {
-            if (err.status === 429) {
-                setError('Too many requests. Please wait a minute before trying again.');
-            } else if (err.status === 400 && !isSignUp) {
-                setError('Invalid email or password. Please check your credentials.');
+            console.error('Caught auth error:', err);
+
+            if (err.status === 429 || err.message?.toLowerCase().includes('rate limit')) {
+                setError('Too many requests. Please wait a minute or use the Dev Bypass at the bottom.');
+            } else if (err.message === 'Email not confirmed') {
+                setError('Email not confirmed. Please check your inbox (and spam) for a verification link from Supabase.');
+            } else if (err.message?.toLowerCase().includes('invalid login credentials')) {
+                setError('Invalid email or password. Are you sure your account is approved?');
             } else {
                 setError(err.message || 'Authentication failed');
             }
