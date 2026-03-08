@@ -24,10 +24,10 @@ export default function AdminLogin({ onLogin, onBack }) {
                 });
                 if (signUpError) throw signUpError;
 
-                // Add to approvals list as pending
+                // Ensure users don't automatically get admin approval
                 await supabase.from('admins').insert([{ email, approved: false }]);
 
-                alert('Account created! Your admin access is currently PENDING APPROVAL. Please check your email for verification and wait for the Super Admin to authorize your access.');
+                alert('Account created! Please check your email for a verification link to confirm your account.');
                 setIsSignUp(false);
             } else {
                 const { data, error: signInError } = await supabase.auth.signInWithPassword({
@@ -58,11 +58,6 @@ export default function AdminLogin({ onLogin, onBack }) {
         }
     };
 
-    const handleDevBypass = () => {
-        localStorage.setItem('is_admin', 'true');
-        onLogin({ email: 'dev@sparkdocs.com', id: 'dev' });
-    };
-
     return (
         <div className="min-h-screen flex items-center justify-center bg-bg p-4">
             <motion.div
@@ -83,13 +78,13 @@ export default function AdminLogin({ onLogin, onBack }) {
 
                 <div className="text-center mb-10 mt-4">
                     <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-6 text-primary shadow-inner">
-                        <Shield size={32} />
+                        <Lock size={32} />
                     </div>
                     <h2 className="text-3xl font-bold tracking-tight mb-2">
-                        {isSignUp ? 'Create Admin' : 'Admin Portal'}
+                        {isSignUp ? 'Create Account' : 'Welcome Back'}
                     </h2>
                     <p className="text-text-muted text-sm">
-                        {isSignUp ? 'Set up your administrator credentials.' : 'Secure access for SPARK DOCS administrators.'}
+                        {isSignUp ? 'Set up your account credentials.' : 'Secure access to your SPARK DOCS dashboard.'}
                     </p>
                 </div>
 
@@ -105,14 +100,14 @@ export default function AdminLogin({ onLogin, onBack }) {
 
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-2">
-                        <label className="label">Admin Email</label>
+                        <label className="label">Email Address</label>
                         <div className="input-icon-wrapper group">
                             <Mail className="text-text-muted group-focus-within:text-primary transition-colors" size={18} />
                             <input
                                 type="email"
                                 required
                                 className="input w-full"
-                                placeholder="admin@sparkdocs.com"
+                                placeholder="name@example.com"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                             />
@@ -157,16 +152,7 @@ export default function AdminLogin({ onLogin, onBack }) {
                         onClick={() => setIsSignUp(!isSignUp)}
                         className="btn-link text-xs uppercase tracking-[0.15em]"
                     >
-                        {isSignUp ? 'Already have an account? Sign In' : 'First time? Create Admin Account'}
-                    </button>
-
-                    <div className="w-full h-px bg-gradient-to-r from-transparent via-card-border to-transparent opacity-50"></div>
-
-                    <button
-                        onClick={handleDevBypass}
-                        className="text-[9px] text-text-muted opacity-20 hover:opacity-100 uppercase tracking-[0.3em] font-black transition-all hover:text-primary bg-transparent border-none cursor-pointer outline-none"
-                    >
-                        Dev Admin Bypass
+                        {isSignUp ? 'Already have an account? Sign In' : 'First time? Create Account'}
                     </button>
                 </div>
 

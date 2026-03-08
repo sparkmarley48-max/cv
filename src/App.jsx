@@ -37,8 +37,10 @@ import {
   Layers,
   Zap,
   CheckCircle,
-  Command,
-  Shapes
+  Shapes,
+  Sun,
+  Moon,
+  LayoutDashboard
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { jsPDF } from 'jspdf';
@@ -46,6 +48,7 @@ import confetti from 'canvas-confetti';
 import PaystackPop from '@paystack/inline-js';
 import { supabase, PAYSTACK_PUBLIC_KEY } from './lib/supabase';
 import AdminDashboard from './components/AdminDashboard';
+import UserDashboard from './components/UserDashboard';
 import AdminLogin from './components/AdminLogin';
 import { generateCVContent, generateStructuredDoc } from './lib/ai';
 
@@ -61,6 +64,7 @@ const SECTIONS = [
   { id: 'invoice', title: 'Sales Receipt / Invoice', icon: FileText, color: '#6366f1', desc: 'Professional business receipts' },
   { id: 'leave_permission', title: 'Permission to be Absent', icon: FileText, color: '#8b5cf6', desc: 'Work/Duty leave request form' },
   { id: 'employment_contract', title: 'SME Employment Contract', icon: Briefcase, color: '#0ea5e9', desc: 'Standard SME labor agreement' },
+  { id: 'resignation_letter', title: 'Resignation Letter', icon: FileText, color: '#ef4444', desc: 'Professional resignation notice' },
   { id: 'qr_code', title: 'QR Code Generator', icon: Hash, color: '#f59e0b', desc: 'Custom QR codes for URLs, WiFi or text' },
 ];
 
@@ -111,7 +115,7 @@ function MainContent() {
   const [showPayment, setShowPayment] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [currentDocId, setCurrentDocId] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('is_admin') === 'true');
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
   const [docPrice, setDocPrice] = useState(() => Number(localStorage.getItem('spark_docs_price')) || 20);
   const [currentPrice, setCurrentPrice] = useState(null);
@@ -119,21 +123,15 @@ function MainContent() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('dark_mode') === 'true');
   const [showProfile, setShowProfile] = useState(false);
   const [showSmartLauncher, setShowSmartLauncher] = useState(false);
+  const [userEmail, setUserEmail] = useState(null);
 
-  const [typePrices, setTypePrices] = useState(() => {
-    const saved = localStorage.getItem('spark_type_prices');
-    return saved ? JSON.parse(saved) : {
-      cv: 20,
-      letter: 15,
-      tenancy: 50,
-      job_offer: 25,
-      invoice: 10,
-      recommendation: 20,
-      leave_permission: 15,
-      employment_contract: 40,
-      smart_doc: 30
-    };
-  });
+  const DEFAULT_PRICES = {
+    cv: 20, letter: 15, tenancy: 50, job_offer: 25,
+    invoice: 10, recommendation: 20, leave_permission: 15,
+    employment_contract: 40, smart_doc: 30, resignation_letter: 15
+  };
+
+  const [typePrices, setTypePrices] = useState(DEFAULT_PRICES);
 
   const getActivePrice = () => {
     return currentPrice || (selectedType && typePrices[selectedType.id]) || docPrice;
@@ -144,6 +142,29 @@ function MainContent() {
     localStorage.setItem('dark_mode', darkMode);
   }, [darkMode]);
 
+  // Fetch global prices from Supabase on mount
+  useEffect(() => {
+    async function fetchPrices() {
+      try {
+        const { data, error } = await supabase
+          .from('prices')
+          .select('id, price');
+        if (error || !data || data.length === 0) return;
+        const fetched = {};
+        let globalPrice = null;
+        data.forEach(row => {
+          if (row.id === 'global') globalPrice = row.price;
+          else fetched[row.id] = row.price;
+        });
+        setTypePrices(prev => ({ ...prev, ...fetched }));
+        if (globalPrice !== null) setDocPrice(globalPrice);
+      } catch (err) {
+        console.error('Could not fetch prices from Supabase:', err);
+      }
+    }
+    fetchPrices();
+  }, []);
+
   const [isApproved, setIsApproved] = useState(false);
   const SUPER_ADMIN = 'couragelanza@gmail.com';
 
@@ -151,6 +172,7 @@ function MainContent() {
     const handleAuth = async (session) => {
       if (session?.user) {
         const userEmail = session.user.email;
+        setUserEmail(userEmail);
         localStorage.setItem('spark_docs_user_email', userEmail);
         if (userEmail === SUPER_ADMIN) {
           setIsAdmin(true);
@@ -183,6 +205,7 @@ function MainContent() {
           setIsApproved(false);
         }
       } else {
+        setUserEmail(null);
         setIsAdmin(false);
         setIsApproved(false);
         localStorage.removeItem('is_admin');
@@ -192,6 +215,7 @@ function MainContent() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('Auth event:', event);
       if (event === 'SIGNED_OUT') {
+        setUserEmail(null);
         setIsAdmin(false);
         setIsApproved(false);
         localStorage.removeItem('is_admin');
@@ -247,8 +271,8 @@ function MainContent() {
         type: selectedType.id,
         template: selectedTemplate,
         data: data,
-        fullName: data.fullName || data.name || data.landlord || 'Untitled Document',
-        email: data.email || 'anonymous@sparkdocs.com',
+        fullName: data.fullName || data.name || data.landlord || data.senderName || data.candidateName || data.businessName || data.companyName || 'Untitled Document',
+        email: userEmail || data.email || 'anonymous@sparkdocs.com',
         is_paid: isPaid || isAdmin,
         price: getActivePrice()
       };
@@ -730,6 +754,41 @@ function MainContent() {
       y = 180;
       addText(data.content || '', 10, 'normal', '#64748b', 10, 105);
       addText("Generated via SPARK DOCS", 8, 'bold', '#94a3b8', 10, 105);
+    } else if (selectedType.id === 'resignation_letter') {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text(data.senderName || '', 190, 30, { align: 'right' });
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(data.senderAddress || '', 190, 36, { align: 'right' });
+      doc.text(data.senderPhone || '', 190, 42, { align: 'right' });
+      doc.text(data.senderEmail || '', 190, 48, { align: 'right' });
+      y = 65;
+
+      addText(data.date || new Date().toLocaleDateString('en-GB'), 10, 'normal', '#64748b', 12);
+
+      addText(data.recipientName || 'Manager', 11, 'bold', '#1e293b', 1);
+      if (data.recipientTitle) addText(data.recipientTitle, 10, 'italic', '#64748b', 1);
+      addText(data.companyName || 'Company Name', 10, 'normal', '#1e293b', 12);
+
+      addText(`Dear ${data.recipientName || 'Manager'},`, 11, 'normal', '#334155', 8);
+
+      const bodyText = `Please accept this letter as formal notification that I am resigning from my position at ${data.companyName}. My last day of employment will be ${data.resignationDate}.\n\n${data.reason || ''}\n\n${data.gratitude || ''}\n\n${data.handover || ''}`;
+
+      const bodyLines = doc.splitTextToSize(bodyText, 170);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor('#334155');
+      doc.text(bodyLines, margin, y);
+      y += (bodyLines.length * 7) + 20;
+
+      addText('Sincerely,', 11);
+      y += 15;
+      doc.setDrawColor('#000');
+      doc.setLineWidth(0.5);
+      doc.line(margin, y, margin + 50, y);
+      y += 5;
+      addText(data.senderName, 11, 'bold');
     } else if (selectedType.id === 'job_offer') {
       addText('JOB OFFER LETTER', 20, 'bold', '#10b981', 4);
       addText(data.companyName, 12, 'bold', '#64748b', 15);
@@ -1192,27 +1251,37 @@ function MainContent() {
     <div className="min-h-dvh flex flex-col overflow-x-hidden">
       <AnimatePresence mode="wait">
         {view === 'landing' ? (
-          <LandingPage key="landing" onStart={startDoc} onAdmin={() => setView(isAdmin ? 'admin' : 'admin_login')} onProfile={() => setShowProfile(true)} darkMode={darkMode} setDarkMode={setDarkMode} />
-        ) : view === 'admin' ? (
-          <AdminDashboard
-            key="admin"
-            onEdit={handleAdminEdit}
-            onBack={() => setView('landing')}
-            currentPrice={docPrice}
-            onPriceChange={(p) => { setDocPrice(p); localStorage.setItem('spark_docs_price', p); }}
-            typePrices={typePrices}
-            onTypePriceChange={(type, p) => {
-              const newPrices = { ...typePrices, [type]: p };
-              setTypePrices(newPrices);
-              localStorage.setItem('spark_type_prices', JSON.stringify(newPrices));
-            }}
-            onLogout={async () => { await supabase.auth.signOut(); setView('landing'); }}
-          />
-        ) : view === 'admin_login' ? (
+          <LandingPage key="landing" onStart={startDoc} onDashboard={() => setView(userEmail ? 'dashboard' : 'login')} onProfile={() => setShowProfile(true)} darkMode={darkMode} setDarkMode={setDarkMode} />
+        ) : view === 'dashboard' ? (
+          isAdmin ? (
+            <AdminDashboard
+              key="admin"
+              onEdit={handleAdminEdit}
+              onBack={() => setView('landing')}
+              currentPrice={docPrice}
+              onPriceChange={(p) => { setDocPrice(p); localStorage.setItem('spark_docs_price', p); }}
+              typePrices={typePrices}
+              onTypePriceChange={(type, p) => {
+                const newPrices = { ...typePrices, [type]: p };
+                setTypePrices(newPrices);
+                localStorage.setItem('spark_type_prices', JSON.stringify(newPrices));
+              }}
+              onLogout={async () => { await supabase.auth.signOut(); setView('landing'); }}
+            />
+          ) : (
+            <UserDashboard
+              key="user"
+              onEdit={handleAdminEdit}
+              onBack={() => setView('landing')}
+              onLogout={async () => { await supabase.auth.signOut(); setView('landing'); }}
+              userEmail={userEmail}
+              onCreateNew={() => setView('landing')}
+            />
+          )
+        ) : view === 'login' ? (
           <AdminLogin key="login" onLogin={(user) => {
-            setIsAdmin(true);
-            localStorage.setItem('is_admin', 'true');
-            setView('admin');
+            // The handleAuth listener will catch this and set emails and roles
+            setView('dashboard');
           }} onBack={() => setView('landing')} />
         ) : (
           <EditorPage
@@ -1314,7 +1383,7 @@ function MainContent() {
   );
 }
 
-function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
+function LandingPage({ onStart, onDashboard, onProfile, darkMode, setDarkMode }) {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="container px-4 md:px-6">
       <header className="header" style={{ border: 'none', background: 'transparent' }}>
@@ -1332,9 +1401,9 @@ function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
             whileTap={{ scale: 0.9 }}
             onClick={() => setDarkMode(!darkMode)}
             className="btn btn-ghost !p-1-5 md:!p-2 rounded-full"
-            title="Toggle Dark Mode"
+            title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
           >
-            {darkMode ? <Sparkles size={18} /> : <FileText size={18} />}
+            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </motion.button>
           <motion.button
             whileHover={{ scale: 1.1 }}
@@ -1348,11 +1417,11 @@ function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
           <motion.button
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            onClick={onAdmin}
+            onClick={onDashboard}
             className="btn btn-ghost !p-1-5 md:!p-2 rounded-full"
-            title="Admin Access"
+            title="Login / Dashboard"
           >
-            <Shield size={20} />
+            <LayoutDashboard size={20} />
           </motion.button>
         </div>
       </header>
@@ -1421,12 +1490,6 @@ function LandingPage({ onStart, onAdmin, onProfile, darkMode, setDarkMode }) {
         <div className="flex justify-center gap-6 mt-4">
           <a href="#" className="text-xs hover:text-primary transition-colors">Privacy Policy</a>
           <a href="#" className="text-xs hover:text-primary transition-colors">Terms of Service</a>
-          <button
-            onClick={() => { localStorage.setItem('is_admin', 'true'); window.location.reload(); }}
-            className="text-xs opacity-10 hover:opacity-100 transition-opacity"
-          >
-            Admin Bypass
-          </button>
         </div>
       </footer>
     </motion.div>
@@ -1673,6 +1736,8 @@ function EditorPage({ type, data, setData, template, setTemplate, onBack, onDown
               <LetterEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
             ) : type?.id === 'job_offer' ? (
               <JobOfferEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
+            ) : type?.id === 'resignation_letter' ? (
+              <ResignationEditor data={data || {}} onChange={handleChange} aiTone={aiTone} onAiUse={() => setShowAiNotice(true)} />
             ) : type?.id === 'qr_code' ? (
               <QRCodeEditor data={data || {}} onChange={handleChange} />
             ) : type?.id === 'smart_doc' ? (
@@ -2535,6 +2600,83 @@ function JobOfferEditor({ data, onChange, aiTone, onAiUse }) {
   );
 }
 
+function ResignationEditor({ data, onChange, aiTone, onAiUse }) {
+  if (!data) return null;
+  const [aiLoading, setAiLoading] = React.useState({});
+  const handleAiSuggestion = async (field, prompt, systemPrompt) => {
+    setAiLoading(prev => ({ ...prev, [field]: true }));
+    try {
+      const result = await generateCVContent(prompt, systemPrompt);
+      onChange(field, result);
+      if (onAiUse) onAiUse();
+    } catch (err) { console.error(err); alert("Failed to generate AI content."); }
+    finally { setAiLoading(prev => ({ ...prev, [field]: false })); }
+  };
+
+  return (
+    <div className="space-y-12 pb-20 px-safe">
+      <EditorSection icon={User} title="1. Your Details" id="sender">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Input label="Your Name" value={data.senderName} onChange={v => onChange('senderName', v)} />
+          <Input label="Your Phone" value={data.senderPhone} onChange={v => onChange('senderPhone', v)} />
+          <div className="md:col-span-2">
+            <Input label="Your Address" value={data.senderAddress} onChange={v => onChange('senderAddress', v)} />
+            <Input label="Your Email" value={data.senderEmail} onChange={v => onChange('senderEmail', v)} />
+          </div>
+        </div>
+      </EditorSection>
+      <EditorSection icon={Briefcase} title="2. Employer Details" id="employer">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Input label="Manager Name" value={data.recipientName} onChange={v => onChange('recipientName', v)} />
+          <Input label="Manager Title" value={data.recipientTitle} onChange={v => onChange('recipientTitle', v)} />
+          <Input label="Company Name" value={data.companyName} onChange={v => onChange('companyName', v)} />
+        </div>
+      </EditorSection>
+      <EditorSection icon={Calendar} title="3. Dates" id="dates">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Input label="Date of Letter" value={data.date} onChange={v => onChange('date', v)} />
+          <Input label="Last Day of Work" value={data.resignationDate} onChange={v => onChange('resignationDate', v)} />
+        </div>
+      </EditorSection>
+      <EditorSection icon={FileText} title="4. Letter Content" id="content">
+        <TextArea
+          label="Reason for Leaving (Optional)"
+          value={data.reason}
+          onChange={v => onChange('reason', v)}
+          onAiClick={() => handleAiSuggestion(
+            'reason',
+            `Write a professional reason for resignation based on: ${data.reason}. Tone: ${aiTone}.`,
+            `You are an HR professional. Output just the text without quotes.`
+          )}
+          isAiLoading={aiLoading['reason']}
+        />
+        <TextArea
+          label="Expression of Gratitude"
+          value={data.gratitude}
+          onChange={v => onChange('gratitude', v)}
+          onAiClick={() => handleAiSuggestion(
+            'gratitude',
+            `Write a professional expression of gratitude for the time at ${data.companyName}. Tone: ${aiTone}.`,
+            `You are an HR professional. Output just the text without quotes.`
+          )}
+          isAiLoading={aiLoading['gratitude']}
+        />
+        <TextArea
+          label="Handover Process/Offer for Help"
+          value={data.handover}
+          onChange={v => onChange('handover', v)}
+          onAiClick={() => handleAiSuggestion(
+            'handover',
+            `Write a professional statement offering help during the transition period before the final date ${data.resignationDate}. Tone: ${aiTone}.`,
+            `You are an HR professional. Output just the text without quotes.`
+          )}
+          isAiLoading={aiLoading['handover']}
+        />
+      </EditorSection>
+    </div>
+  );
+}
+
 function RentReceiptEditor({ data, onChange }) {
   if (!data) return null;
   return (
@@ -2595,88 +2737,193 @@ function SmartDocLauncher({ onLaunch, onClose }) {
     }
   };
 
+  const featureCards = [
+    { icon: Layers, label: 'Smart Sections', desc: 'AI builds logical hierarchy' },
+    { icon: PieChart, label: 'Auto Infographics', desc: 'Charts & visuals from data' },
+    { icon: Target, label: 'Audience Tuned', desc: 'Content for your readers' },
+    { icon: Zap, label: 'Instant Format', desc: 'Professional in seconds' },
+  ];
+
   return (
-    <div className="modal !max-w-2xl">
-      <div className="flex justify-between items-center mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary shadow-inner">
-            <Sparkles size={24} />
-          </div>
+    <div className="modal !max-w-3xl !p-0 overflow-hidden">
+      {/* Gradient Header with Pattern */}
+      <div style={{
+        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 30%, #b45309 70%, #92400e 100%)',
+        position: 'relative',
+        overflow: 'hidden',
+        padding: '2.5rem 2rem 2rem',
+      }}>
+        {/* Decorative Pattern */}
+        <div style={{
+          position: 'absolute', inset: 0, opacity: 0.1,
+          backgroundImage: 'radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1.5px, transparent 1.5px), radial-gradient(circle at 60% 80%, white 1px, transparent 1px)',
+          backgroundSize: '60px 60px, 80px 80px, 40px 40px',
+        }} />
+        {/* Floating Orbs */}
+        <motion.div
+          animate={{ y: [0, -10, 0], opacity: [0.2, 0.4, 0.2] }}
+          transition={{ duration: 4, repeat: Infinity }}
+          style={{ position: 'absolute', top: '10%', right: '10%', width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', filter: 'blur(20px)' }}
+        />
+        <motion.div
+          animate={{ y: [0, 8, 0], opacity: [0.15, 0.3, 0.15] }}
+          transition={{ duration: 5, repeat: Infinity }}
+          style={{ position: 'absolute', bottom: '5%', left: '15%', width: 60, height: 60, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', filter: 'blur(15px)' }}
+        />
+
+        <div style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">AI Smart Architect</h2>
-            <p className="text-[10px] text-text-muted uppercase font-black tracking-widest">Anything-to-Format Workspace</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+              <motion.div
+                animate={{ rotate: [0, 10, -10, 0] }}
+                transition={{ duration: 3, repeat: Infinity }}
+                style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}
+              >
+                <Sparkles size={26} color="white" />
+              </motion.div>
+              <div>
+                <h2 style={{ fontSize: '1.6rem', fontWeight: 900, color: 'white', letterSpacing: '-0.03em', margin: 0 }}>AI Smart Architect</h2>
+                <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.7)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.2em', margin: 0 }}>✦ ANYTHING-TO-FORMAT WORKSPACE</p>
+              </div>
+            </div>
           </div>
+          <button onClick={onClose} style={{ color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 10, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backdropFilter: 'blur(10px)' }}>
+            <X size={20} />
+          </button>
         </div>
-        <button onClick={onClose} className="text-text-muted hover:text-white transition-colors"><X size={24} /></button>
+
+        {/* Feature Cards Row */}
+        <div style={{ position: 'relative', zIndex: 1, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginTop: '1.5rem' }}>
+          {featureCards.map((f, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1 }}
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                backdropFilter: 'blur(10px)',
+                borderRadius: 14,
+                padding: '0.75rem 0.6rem',
+                textAlign: 'center',
+                border: '1px solid rgba(255,255,255,0.15)',
+              }}
+            >
+              <f.icon size={18} color="white" style={{ margin: '0 auto 0.3rem' }} />
+              <div style={{ fontSize: '0.6rem', fontWeight: 800, color: 'white', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</div>
+              <div style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>{f.desc}</div>
+            </motion.div>
+          ))}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
-        <div className="space-y-6">
-          <div className="form-group">
-            <label className="label">What are you creating?</label>
-            <input
-              className="input w-full"
-              placeholder="e.g. Project Proposal for XYZ client"
-              value={intent}
-              onChange={e => setIntent(e.target.value)}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
+      {/* Body */}
+      <div style={{ padding: '2rem' }}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+          <div className="space-y-6">
             <div className="form-group">
-              <label className="label">Target Audience</label>
+              <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FileText size={14} className="text-primary" /> What are you creating?
+              </label>
               <input
                 className="input w-full"
-                placeholder="e.g. Stakeholders"
-                value={audience}
-                onChange={e => setAudience(e.target.value)}
+                placeholder="e.g. Project Proposal for XYZ client"
+                value={intent}
+                onChange={e => setIntent(e.target.value)}
               />
             </div>
-            <div className="form-group">
-              <label className="label">Tone</label>
-              <select
-                className="input w-full bg-bg"
-                value={tone}
-                onChange={e => setTone(e.target.value)}
-                style={{ color: 'var(--text)' }}
-              >
-                <option value="Professional" style={{ color: '#000' }}>Professional</option>
-                <option value="Executive" style={{ color: '#000' }}>Executive</option>
-                <option value="Urgent" style={{ color: '#000' }}>Urgent / Formal</option>
-                <option value="Creative" style={{ color: '#000' }}>Creative</option>
-                <option value="Friendly" style={{ color: '#000' }}>Friendly</option>
-              </select>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="form-group">
+                <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Users size={14} className="text-primary" /> Target Audience
+                </label>
+                <input
+                  className="input w-full"
+                  placeholder="e.g. Stakeholders"
+                  value={audience}
+                  onChange={e => setAudience(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Activity size={14} className="text-primary" /> Tone
+                </label>
+                <select
+                  className="input w-full bg-bg"
+                  value={tone}
+                  onChange={e => setTone(e.target.value)}
+                  style={{ color: 'var(--text)' }}
+                >
+                  <option value="Professional" style={{ color: '#000' }}>Professional</option>
+                  <option value="Executive" style={{ color: '#000' }}>Executive</option>
+                  <option value="Urgent" style={{ color: '#000' }}>Urgent / Formal</option>
+                  <option value="Creative" style={{ color: '#000' }}>Creative</option>
+                  <option value="Friendly" style={{ color: '#000' }}>Friendly</option>
+                </select>
+              </div>
             </div>
           </div>
+          <div className="form-group h-full flex flex-col">
+            <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <BookOpen size={14} className="text-primary" /> Raw Notes / Background Info
+            </label>
+            <textarea
+              className="input w-full flex-1 min-h-[140px]"
+              placeholder="Paste your raw notes or specific requirements here..."
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+            />
+          </div>
         </div>
-        <div className="form-group h-full flex flex-col">
-          <label className="label">Raw Notes / Background Info (AI Instruction)</label>
-          <textarea
-            className="input w-full flex-1 min-h-[160px]"
-            placeholder="Paste your raw notes or specific requirements here..."
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-          />
-        </div>
-      </div>
 
-      <div className="flex items-center gap-4 bg-primary/5 p-6 rounded-2xl border border-primary/10 mb-8">
-        <Shapes className="text-primary hidden sm:block" size={40} />
-        <div>
-          <h4 className="text-sm font-bold">Structural Metadata Analysis</h4>
-          <p className="text-xs text-text-muted">AI will automatically determine document sections, logical hierarchy, and best industry tone for your intent.</p>
+        {/* How It Works - Infographic Steps */}
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(245,158,11,0.05), rgba(217,119,6,0.08))',
+          borderRadius: 20,
+          padding: '1.5rem',
+          border: '1px solid rgba(245,158,11,0.12)',
+          marginBottom: '1.5rem',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1rem' }}>
+            <Shapes size={16} className="text-primary" style={{ animation: 'pulse 2s infinite' }} />
+            <span style={{ fontSize: '0.65rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.15em', color: '#f59e0b' }}>How AI Structural Mapping Works</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {[
+              { num: '01', text: 'Analyze Intent' },
+              { num: '02', text: 'Map Sections' },
+              { num: '03', text: 'Generate Content' },
+              { num: '04', text: 'Add Visuals' },
+              { num: '05', text: 'Format Document' },
+            ].map((step, i) => (
+              <React.Fragment key={i}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(245,158,11,0.08)', borderRadius: 10, padding: '0.4rem 0.7rem' }}>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 900, color: '#f59e0b', fontFamily: 'monospace' }}>{step.num}</span>
+                  <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#78716c' }}>{step.text}</span>
+                </div>
+                {i < 4 && <ArrowRight size={12} style={{ color: '#d6d3d1', flexShrink: 0 }} />}
+              </React.Fragment>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <div className="flex gap-4">
-        <button onClick={onClose} className="btn btn-ghost flex-1">Maybe Later</button>
-        <button
-          onClick={handleCreate}
-          disabled={loading || !intent}
-          className="btn btn-primary flex-[2] shadow-xl !py-4"
-        >
-          {loading ? <Loader2 size={24} className="animate-spin" /> : <Command size={20} />}
-          {loading ? "Architecting Document..." : "Generate AI Smart-Doc"}
-        </button>
+        <div className="flex gap-4">
+          <button onClick={onClose} className="btn btn-ghost flex-1">Maybe Later</button>
+          <button
+            onClick={handleCreate}
+            disabled={loading || !intent}
+            className="btn flex-[2] shadow-xl !py-4"
+            style={{
+              background: loading ? '#92400e' : 'linear-gradient(135deg, #f59e0b, #d97706)',
+              color: 'white',
+              border: 'none',
+              fontWeight: 800,
+            }}
+          >
+            {loading ? <Loader2 size={24} className="animate-spin" /> : <Command size={20} />}
+            {loading ? "Architecting Document..." : "Generate AI Smart-Doc"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2694,11 +2941,19 @@ function SmartEditor({ data, onChange, onListUpdate, onAddList, onRemoveList, ai
 
       <Reorder.Group axis="y" values={data.sections || []} onReorder={v => onChange('sections', v)} className="space-y-6">
         {(data.sections || []).map((section, i) => (
-          <Reorder.Item key={section.id} value={section} className="card !p-6 md:!p-10 border-l-4 border-l-primary/40 relative group">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <GripVertical size={16} className="text-text-muted cursor-grab active:cursor-grabbing" />
-                <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Section {i + 1}</span>
+          <Reorder.Item key={section.id} value={section}
+            className="group relative bg-white/50 backdrop-blur-xl border border-white/40 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-[2rem] p-6 md:p-8 overflow-hidden transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)]"
+          >
+            <div className="absolute top-0 left-0 w-2 h-full bg-gradient-to-b from-primary/60 to-secondary/60 opacity-50 group-hover:opacity-100 transition-opacity" />
+            <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-100/50">
+              <div className="flex items-center gap-4">
+                <GripVertical size={20} className="text-slate-300 hover:text-primary cursor-grab active:cursor-grabbing transition-colors" />
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-slate-100/80 flex items-center justify-center text-[10px] font-black text-slate-500 shadow-inner">
+                    {String(i + 1).padStart(2, '0')}
+                  </div>
+                  <span className="text-xs font-black text-slate-800 uppercase tracking-widest leading-none mt-0.5">Section Editor</span>
+                </div>
               </div>
               <button onClick={() => onRemoveList('sections', i)} className="text-text-muted hover:text-red-500 transition-colors">
                 <Trash2 size={20} />
@@ -2791,24 +3046,43 @@ function ChartVisual({ config, themeColor }) {
   const { type, data, unit } = config;
   const color = themeColor || '#f59e0b';
 
+  // Chart type icon mapping
+  const chartIcons = { bar: Activity, progress: Target, metric: Zap, line: TrendingUp, area: TrendingUp, donut: PieChart, step: Layers, comparison: List, swot: Shield, infographic_stat: Award };
+  const chartLabels = { bar: 'Performance Metrics', progress: 'Completion Rates', metric: 'Key Indicators', line: 'Trend Analysis', area: 'Growth Overview', donut: 'Distribution', step: 'Process Flow', comparison: 'Comparative Analysis', swot: 'Strategic Analysis', infographic_stat: 'Key Statistics' };
+  const ChartIcon = chartIcons[type] || Activity;
+
   if (type === 'bar') {
     const maxVal = Math.max(...data.map(d => d.value), 1);
     return (
-      <div className="my-10 p-8 bg-white dark:bg-slate-900/50 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none">
-        <div className="flex flex-col gap-6">
+      <div style={{ margin: '1.5rem 0', padding: '2rem', background: 'linear-gradient(135deg, #ffffff, #f8fafc)', borderRadius: 20, border: '1px solid #f1f5f9', boxShadow: '0 8px 32px rgba(0,0,0,0.04)', position: 'relative', overflow: 'hidden' }}>
+        {/* Background decoration */}
+        <div style={{ position: 'absolute', top: -40, right: -40, width: 120, height: 120, borderRadius: '50%', background: `${color}08`, pointerEvents: 'none' }} />
+        {/* Chart Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.5rem' }}>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ChartIcon size={16} color={color} />
+          </div>
+          <div>
+            <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{chartLabels[type]}</div>
+            <div style={{ fontSize: '0.5rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.15em' }}>{data.length} metrics tracked</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {data.map((item, i) => (
-            <div key={i} className="space-y-2">
-              <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full" style={{ background: color }}></div>{item.label}</span>
-                <span className="text-slate-800 dark:text-slate-200 font-black">{item.value}{unit}</span>
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                <span style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
+                  {item.label}
+                </span>
+                <span style={{ color: '#1e293b', fontWeight: 900, fontSize: '0.7rem' }}>{item.value}{unit}</span>
               </div>
-              <div className="h-3 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden p-0.5">
+              <div style={{ height: 10, width: '100%', background: '#f1f5f9', borderRadius: 6, overflow: 'hidden', padding: 2 }}>
                 <motion.div
                   initial={{ width: 0 }}
                   whileInView={{ width: `${(item.value / maxVal) * 100}%` }}
-                  transition={{ duration: 1, ease: 'easeOut' }}
-                  className="h-full rounded-full shadow-lg"
-                  style={{ background: `linear-gradient(90deg, ${color}, ${color}dd)` }}
+                  transition={{ duration: 1, ease: 'easeOut', delay: i * 0.1 }}
+                  style={{ height: '100%', borderRadius: 4, background: `linear-gradient(90deg, ${color}, ${color}cc)`, boxShadow: `0 2px 8px ${color}40` }}
                 />
               </div>
             </div>
@@ -2820,46 +3094,79 @@ function ChartVisual({ config, themeColor }) {
 
   if (type === 'progress') {
     return (
-      <div className="my-10 flex flex-wrap gap-12 justify-center">
-        {data.map((item, i) => (
-          <div key={i} className="text-center group">
-            <div className="relative w-40 h-40 flex items-center justify-center p-4">
-              <svg className="w-full h-full transform -rotate-90 filter drop-shadow-md">
-                <circle cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-slate-100 dark:text-slate-800" />
-                <motion.circle
-                  cx="80" cy="80" r="70" stroke={color} strokeWidth="12" fill="transparent"
-                  strokeDasharray="440"
-                  initial={{ strokeDashoffset: 440 }}
-                  whileInView={{ strokeDashoffset: 440 - (440 * item.value) / 100 }}
-                  transition={{ duration: 1.5, ease: 'easeInOut' }}
-                  strokeLinecap="round"
-                />
-              </svg>
-              <div className="absolute flex flex-col items-center">
-                <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tighter">{item.value}{unit || '%'}</span>
-              </div>
-            </div>
-            <div className="mt-4 text-[10px] font-black text-slate-500 uppercase tracking-widest leading-tight max-w-[120px] mx-auto opacity-70 group-hover:opacity-100 transition-opacity">{item.label}</div>
+      <div style={{ margin: '1.5rem 0', padding: '2rem', background: 'linear-gradient(135deg, #ffffff, #f8fafc)', borderRadius: 20, border: '1px solid #f1f5f9', boxShadow: '0 8px 32px rgba(0,0,0,0.04)', position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', bottom: -30, left: -30, width: 100, height: 100, borderRadius: '50%', background: `${color}06`, pointerEvents: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.5rem' }}>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ChartIcon size={16} color={color} />
           </div>
-        ))}
+          <div>
+            <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{chartLabels[type]}</div>
+            <div style={{ fontSize: '0.5rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.15em' }}>{data.length} indicators</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem', justifyContent: 'center' }}>
+          {data.map((item, i) => (
+            <div key={i} style={{ textAlign: 'center' }}>
+              <div style={{ position: 'relative', width: 130, height: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 10 }}>
+                <svg style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+                  <circle cx="65" cy="65" r="55" stroke="#f1f5f9" strokeWidth="10" fill="transparent" />
+                  <motion.circle
+                    cx="65" cy="65" r="55" stroke={color} strokeWidth="10" fill="transparent"
+                    strokeDasharray="346"
+                    initial={{ strokeDashoffset: 346 }}
+                    whileInView={{ strokeDashoffset: 346 - (346 * Math.min(item.value, 100)) / 100 }}
+                    transition={{ duration: 1.5, ease: 'easeInOut' }}
+                    strokeLinecap="round"
+                    style={{ filter: `drop-shadow(0 2px 6px ${color}40)` }}
+                  />
+                </svg>
+                <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <span style={{ fontSize: '1.5rem', fontWeight: 900, color: '#1e293b', letterSpacing: '-0.05em' }}>{item.value}</span>
+                  <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>{unit || '%'}</span>
+                </div>
+              </div>
+              <div style={{ marginTop: 6, fontSize: '0.6rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', maxWidth: 120, margin: '6px auto 0', lineHeight: 1.3 }}>{item.label}</div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
   if (type === 'metric') {
+    const metricIcons = [Zap, Target, Award, TrendingUp, CheckCircle, Activity];
     return (
-      <div className="my-10 grid grid-cols-2 md:grid-cols-4 gap-4">
-        {data.map((item, i) => (
-          <motion.div
-            key={i}
-            whileHover={{ y: -5 }}
-            className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border-b-4 shadow-sm"
-            style={{ borderBottomColor: color }}
-          >
-            <div className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">{item.label}</div>
-            <div className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter">{item.value}{unit}</div>
-          </motion.div>
-        ))}
+      <div style={{ margin: '1.5rem 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Zap size={14} color={color} />
+          </div>
+          <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{chartLabels[type]}</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(data.length, 4)}, 1fr)`, gap: '0.75rem' }}>
+          {data.map((item, i) => {
+            const MetricIcon = metricIcons[i % metricIcons.length];
+            return (
+              <motion.div
+                key={i}
+                whileHover={{ y: -3 }}
+                style={{
+                  padding: '1.2rem', borderRadius: 16,
+                  background: 'linear-gradient(135deg, #fafafa, #f1f5f9)',
+                  borderBottom: `3px solid ${color}`,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
+                  position: 'relative', overflow: 'hidden',
+                }}
+              >
+                <div style={{ position: 'absolute', top: -10, right: -10, width: 50, height: 50, borderRadius: '50%', background: `${color}06`, pointerEvents: 'none' }} />
+                <MetricIcon size={18} color={color} style={{ marginBottom: 6, opacity: 0.6 }} />
+                <div style={{ fontSize: '0.55rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 2 }}>{item.label}</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#1e293b', letterSpacing: '-0.04em' }}>{item.value}<span style={{ fontSize: '0.75rem', color: '#94a3b8', marginLeft: 2 }}>{unit}</span></div>
+              </motion.div>
+            );
+          })}
+        </div>
       </div>
     );
   }
@@ -2873,11 +3180,15 @@ function ChartVisual({ config, themeColor }) {
     const areaPath = `M 0,${height} L ${pathData} L ${width},${height} Z`;
 
     return (
-      <div className="my-10 p-8 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-xl">
-        <div className="flex justify-between items-center mb-6">
-          <div className="flex items-center gap-2">
-            <TrendingUp size={16} className="text-slate-400" />
-            <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Trend Analysis / Project Growth</span>
+      <div style={{ margin: '1.5rem 0', padding: '2rem', background: 'linear-gradient(135deg, #ffffff, #f8fafc)', borderRadius: 20, border: '1px solid #f1f5f9', boxShadow: '0 8px 32px rgba(0,0,0,0.04)', position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', top: -30, left: -30, width: 100, height: 100, borderRadius: '50%', background: `${color}06`, pointerEvents: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.5rem' }}>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ChartIcon size={16} color={color} />
+          </div>
+          <div>
+            <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{chartLabels[type]}</div>
+            <div style={{ fontSize: '0.5rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.15em' }}>{points.length} data points</div>
           </div>
         </div>
         <div className="relative w-full h-40">
@@ -3088,26 +3399,60 @@ function ChartVisual({ config, themeColor }) {
   }
 
   if (type === 'infographic_stat') {
+    const statIcons = [Zap, Target, Award, TrendingUp, CheckCircle, Activity, Globe, Layers];
+    const gradients = [
+      `linear-gradient(135deg, ${color}, ${color}cc)`,
+      `linear-gradient(135deg, #6366f1, #818cf8)`,
+      `linear-gradient(135deg, #ec4899, #f472b6)`,
+      `linear-gradient(135deg, #10b981, #34d399)`,
+      `linear-gradient(135deg, #f59e0b, #fbbf24)`,
+      `linear-gradient(135deg, #8b5cf6, #a78bfa)`,
+    ];
     return (
-      <div className="my-10 grid grid-cols-1 md:grid-cols-2 gap-6">
-        {data.map((item, i) => (
-          <motion.div
-            key={i}
-            whileHover={{ scale: 1.02 }}
-            className="flex items-center gap-6 p-8 bg-gradient-to-br from-white to-slate-50 rounded-[40px] border border-slate-100 shadow-xl"
-          >
-            <div
-              className="w-20 h-20 rounded-[30px] flex items-center justify-center text-white shadow-lg rotate-3 group-hover:rotate-0 transition-transform"
-              style={{ background: color }}
-            >
-              {i === 0 ? <Zap size={32} /> : i === 1 ? <Target size={32} /> : <Award size={32} />}
-            </div>
-            <div>
-              <div className="text-4xl font-black text-slate-800 tracking-tighter mb-1">{item.value}{unit}</div>
-              <div className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{item.label}</div>
-            </div>
-          </motion.div>
-        ))}
+      <div style={{ margin: '1.5rem 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.2rem' }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Award size={14} color={color} />
+          </div>
+          <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Key Statistics</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
+          {data.map((item, i) => {
+            const StatIcon = statIcons[i % statIcons.length];
+            return (
+              <motion.div
+                key={i}
+                whileHover={{ scale: 1.02, y: -2 }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '1rem',
+                  padding: '1.2rem 1.5rem',
+                  background: 'linear-gradient(135deg, #ffffff, #f8fafc)',
+                  borderRadius: 20,
+                  border: '1px solid #f1f5f9',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.04)',
+                  position: 'relative', overflow: 'hidden',
+                }}
+              >
+                {/* Decorative diagonal */}
+                <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: `${color}05`, pointerEvents: 'none' }} />
+                <div style={{
+                  width: 52, height: 52, borderRadius: 18,
+                  background: gradients[i % gradients.length],
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '0 6px 20px rgba(0,0,0,0.15)',
+                  flexShrink: 0,
+                  transform: 'rotate(3deg)',
+                }}>
+                  <StatIcon size={24} color="white" />
+                </div>
+                <div>
+                  <div style={{ fontSize: '1.8rem', fontWeight: 900, color: '#1e293b', letterSpacing: '-0.04em', lineHeight: 1 }}>{item.value}<span style={{ fontSize: '0.8rem', color: '#94a3b8', marginLeft: 2 }}>{unit}</span></div>
+                  <div style={{ fontSize: '0.6rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 2 }}>{item.label}</div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
       </div>
     );
   }
@@ -3118,30 +3463,177 @@ function ChartVisual({ config, themeColor }) {
 function SmartPreview({ data, isPaid, isAdmin }) {
   if (!data) return null;
   const accent = data.accentColor || '#f59e0b';
+
+  // Generate a lighter tint for backgrounds
+  const hexToRgb = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return { r, g, b };
+  };
+  const rgb = hexToRgb(accent);
+  const tint = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.04)`;
+  const tintMedium = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`;
+  const tintStrong = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15)`;
+
+  const sectionIcons = [FileText, Layers, Target, Award, Zap, BookOpen, Activity, PieChart, Globe, CheckCircle];
+
   return (
-    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
-      <div style={{ textAlign: 'center', marginBottom: '3.5rem', borderBottom: `2px solid ${accent}`, paddingBottom: '2rem' }}>
-        <h1 style={{ fontSize: '2.2rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '-0.03em' }}>{data.title}</h1>
-        <div style={{ width: '60px', height: '4px', background: accent, margin: '1rem auto' }}></div>
+    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif', position: 'relative' }}>
+
+      {/* Watermark Background Pattern */}
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none', opacity: 0.025, zIndex: 0, overflow: 'hidden',
+        backgroundImage: `repeating-linear-gradient(45deg, ${accent} 0px, ${accent} 1px, transparent 1px, transparent 20px), repeating-linear-gradient(-45deg, ${accent} 0px, ${accent} 1px, transparent 1px, transparent 20px)`,
+      }} />
+
+      {/* Decorative Corner Accent */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
+        <div style={{
+          position: 'absolute', top: 0, right: 0, width: 120, height: 120, pointerEvents: 'none',
+          background: `linear-gradient(225deg, ${tintStrong} 0%, transparent 60%)`,
+          borderRadius: '0 0 0 100%',
+        }} />
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, width: 100, height: 100, pointerEvents: 'none',
+          background: `linear-gradient(45deg, ${tintStrong} 0%, transparent 60%)`,
+          borderRadius: '0 100% 0 0',
+        }} />
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
-        {(data.sections || []).map((section, idx) => (
-          <section key={idx}>
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: accent, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.5rem' }}>
-              {section.title}
-            </h2>
-            <div style={{ fontSize: '1rem', lineHeight: '1.8', color: '#334155', whiteSpace: 'pre-line', marginBottom: '1.5rem' }}>
-              <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{section.content}</ProtectText>
+      <div style={{ padding: '0 1.5rem' }}>
+        {/* Header Section */}
+        <div style={{ position: 'relative', zIndex: 1, textAlign: 'center', marginBottom: '2.5rem', paddingBottom: '2rem' }}>
+          {/* Top accent bar */}
+          <div style={{ width: '100%', height: 5, background: `linear-gradient(90deg, transparent, ${accent}, transparent)`, marginBottom: '2rem', borderRadius: 3 }} />
+
+          {/* Document icon badge */}
+          <div style={{
+            width: 56, height: 56, borderRadius: 16,
+            background: `linear-gradient(135deg, ${accent}, ${accent}cc)`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 1rem',
+            boxShadow: `0 8px 24px ${tintStrong}`,
+          }}>
+            <Sparkles size={28} color="white" />
+          </div>
+
+          <h1 style={{
+            fontSize: '2rem', fontWeight: 900, textTransform: 'uppercase',
+            letterSpacing: '-0.02em', lineHeight: 1.1, color: '#0f172a', margin: '0 0 0.8rem',
+            background: `linear-gradient(135deg, #0f172a 60%, ${accent})`,
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+          }}>{data.title}</h1>
+
+          {/* Decorative line with diamond */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: '1rem' }}>
+            <div style={{ flex: 1, maxWidth: 80, height: 1, background: `linear-gradient(90deg, transparent, ${accent}60)` }} />
+            <div style={{ width: 8, height: 8, background: accent, transform: 'rotate(45deg)', borderRadius: 2, opacity: 0.6 }} />
+            <div style={{ flex: 1, maxWidth: 80, height: 1, background: `linear-gradient(90deg, ${accent}60, transparent)` }} />
+          </div>
+
+          <div style={{ marginTop: '0.8rem', fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.2em' }}>
+            ✦ AI STRUCTURED DOCUMENT ✦
+          </div>
+        </div>
+
+        {/* Sections */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', position: 'relative', zIndex: 1 }}>
+          {(data.sections || []).map((section, idx) => {
+            const SectionIcon = sectionIcons[idx % sectionIcons.length];
+            return (
+              <section key={idx} style={{
+                position: 'relative',
+                background: idx % 2 === 0 ? tint : 'transparent',
+                borderRadius: 12,
+                padding: '1.5rem',
+                paddingLeft: '2rem',
+                borderLeft: `4px solid ${accent}`,
+                margin: '0 0.5rem', // Adds a tiny bit of breathing space so the badge doesn't hit edge
+              }}>
+                {/* Section Number Badge */}
+                <div style={{
+                  position: 'absolute', left: -14, top: 12,
+                  width: 28, height: 28, borderRadius: '50%',
+                  background: `linear-gradient(135deg, ${accent}, ${accent}dd)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: `0 3px 12px ${tintStrong}`,
+                  border: '3px solid white',
+                }}>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 900, color: 'white' }}>{String(idx + 1).padStart(2, '0')}</span>
+                </div>
+
+                {/* Section Header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '0.8rem' }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 10,
+                    background: tintMedium,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <SectionIcon size={16} color={accent} />
+                  </div>
+                  <h2 style={{
+                    fontSize: '1.1rem', fontWeight: 800, color: accent,
+                    textTransform: 'uppercase', letterSpacing: '0.04em', margin: 0,
+                  }}>{section.title}</h2>
+                </div>
+
+                {/* Section Content */}
+                <div style={{
+                  fontSize: '0.95rem', lineHeight: '1.85', color: '#334155',
+                  whiteSpace: 'pre-line', marginBottom: section.visuals ? '1rem' : 0,
+                  paddingLeft: '2.6rem',
+                }}>
+                  <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{section.content}</ProtectText>
+                </div>
+
+                {/* Visual Indicator */}
+                {section.visuals && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      fontSize: '0.55rem', fontWeight: 800, color: accent,
+                      textTransform: 'uppercase', letterSpacing: '0.15em',
+                      background: tintMedium, padding: '0.3rem 0.8rem',
+                      borderRadius: 20, marginBottom: '0.5rem',
+                    }}>
+                      <Activity size={10} /> DATA VISUALIZATION
+                    </div>
+                    <ChartVisual config={section.visuals} themeColor={accent} />
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          marginTop: '3rem', position: 'relative', zIndex: 1,
+          background: `linear-gradient(135deg, ${tint}, ${tintMedium})`,
+          borderRadius: 12, padding: '1.5rem 2rem',
+          border: `1px solid ${tintMedium}`,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 10,
+                background: `linear-gradient(135deg, ${accent}, ${accent}cc)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Sparkles size={16} color="white" />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#334155' }}>Official AI-Generated Document</div>
+                <div style={{ fontSize: '0.55rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Powered by Spark Docs • Structural Mapping Engine</div>
+              </div>
             </div>
-            <ChartVisual config={section.visuals} themeColor={accent} />
-          </section>
-        ))}
-      </div>
-
-      <div style={{ marginTop: '5rem', borderTop: '1px solid #e2e8f0', paddingTop: '2rem', fontSize: '0.9rem', color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
-        <span>Official Document • AI Structural Mapping</span>
-        <span>Date: {new Date().toLocaleDateString('en-GB')}</span>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748b' }}>Date: {new Date().toLocaleDateString('en-GB')}</div>
+              <div style={{ fontSize: '0.5rem', color: '#94a3b8', fontWeight: 600 }}>REF: SD-{Date.now().toString(36).toUpperCase()}</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -3792,6 +4284,54 @@ function JobOfferPreview({ data, isPaid, isAdmin }) {
   );
 }
 
+function ResignationPreview({ data, isPaid, isAdmin }) {
+  if (!data) return null;
+  return (
+    <div className="document-cv" style={{ fontFamily: 'Inter, sans-serif' }}>
+      <div style={{ textAlign: 'right', marginBottom: '3rem' }}>
+        <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+          <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.senderName}</ProtectText>
+        </h2>
+        <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.senderAddress}</p>
+        <p style={{ fontSize: '0.85rem', color: '#64748b' }}>{data.senderPhone} | {data.senderEmail}</p>
+      </div>
+      <div style={{ marginBottom: '2.5rem' }}>
+        <p style={{ fontSize: '0.9rem', color: '#64748b' }}>Date: {data.date}</p>
+      </div>
+      <div style={{ marginBottom: '2.5rem' }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 800 }}>{data.recipientName}</h3>
+        <p style={{ fontSize: '0.85rem' }}>{data.recipientTitle}</p>
+        <p style={{ fontSize: '0.85rem' }}>{data.companyName}</p>
+      </div>
+      <div style={{ fontSize: '1rem', lineHeight: 1.8, color: '#334155' }}>
+        <p style={{ marginBottom: '1.5rem' }}>Dear {data.recipientName || 'Manager'},</p>
+        <p style={{ marginBottom: '1.5rem' }}>
+          Please accept this letter as formal notification that I am resigning from my position at {data.companyName}. My last day of employment will be <strong>{data.resignationDate}</strong>.
+        </p>
+        {data.reason && (
+          <p style={{ marginBottom: '1.5rem', whiteSpace: 'pre-line' }}>
+            <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.reason}</ProtectText>
+          </p>
+        )}
+        {data.gratitude && (
+          <p style={{ marginBottom: '1.5rem', whiteSpace: 'pre-line' }}>
+            <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.gratitude}</ProtectText>
+          </p>
+        )}
+        {data.handover && (
+          <p style={{ marginBottom: '1.5rem', whiteSpace: 'pre-line' }}>
+            <ProtectText isPaid={isPaid} isAdmin={isAdmin}>{data.handover}</ProtectText>
+          </p>
+        )}
+      </div>
+      <div style={{ marginTop: '4rem' }}>
+        <p style={{ fontSize: '0.95rem' }}>Sincerely,</p>
+        <p style={{ fontWeight: 800, marginTop: '2.5rem' }}>{data.senderName}</p>
+      </div>
+    </div>
+  );
+}
+
 function RentReceiptPreview({ data, isPaid, isAdmin }) {
   if (!data) return null;
   return (
@@ -3840,6 +4380,7 @@ function PreviewContent({ id, data, template, isPaid, isAdmin }) {
   if (id === 'employment_contract') return <ContractPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
   if (id === 'recommendation') return <RecommendationPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
   if (id === 'job_offer') return <JobOfferPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
+  if (id === 'resignation_letter') return <ResignationPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
   if (id === 'rent_receipt') return <RentReceiptPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
   if (id === 'qr_code') return <QRCodePreview data={data} />;
   if (id === 'smart_doc') return <SmartPreview data={data} isPaid={isPaid} isAdmin={isAdmin} />;
@@ -4210,7 +4751,7 @@ function ProfileModal({ onClose }) {
 }
 
 function getInitialData(id) {
-  const profile = JSON.parse(localStorage.getItem('user_profile') || '{}');
+  const profile = JSON.parse(localStorage.getItem('user_profile') || '{ }');
 
   const baseData = (typeId) => {
     if (typeId === 'cv') return {
@@ -4289,6 +4830,15 @@ function getInitialData(id) {
       jobTitle: '', department: '', commencementDate: '', probationPeriod: '3 Months',
       salaryAmount: '', workingHours: '8:00 AM - 5:00 PM', annualLeave: '15 Days', noticePeriod: '1 Month',
       contractDate: new Date().toLocaleDateString('en-GB')
+    };
+    if (typeId === 'resignation_letter') return {
+      senderName: profile.fullName || '', senderAddress: profile.address || '', senderPhone: profile.phone || '', senderEmail: profile.email || '',
+      date: new Date().toLocaleDateString('en-GB'),
+      recipientName: '', recipientTitle: 'Manager', companyName: profile.companyName || '',
+      resignationDate: '',
+      reason: 'move on to new opportunities',
+      gratitude: "I am incredibly grateful for the opportunities I've had during my time here.",
+      handover: 'I will ensure all my tasks are completed and properly handed over before my departure to ensure a smooth transition.'
     };
     if (typeId === 'qr_code') return {
       label: 'My Custom QR',
